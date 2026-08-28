@@ -1,0 +1,68 @@
+# ────────────────────────────────────────────────────────────────
+# SCRUB v4 nav_service — example config (no secrets).
+# Copy this to `config.yaml` and fill in your values. The real
+# `config.yaml` is git-ignored to avoid leaking credentials.
+#
+#   cp config.example.yaml config.yaml
+#
+# Secrets can also be supplied via environment variables:
+#   SUPABASE_URL / SUPABASE_KEY
+#   FIREBASE credentials via `firebase` block below.
+# ────────────────────────────────────────────────────────────────
+
+sensor_gps_link:
+  device: "/dev/ttyAMA0"
+  baud: 115200
+  reconnect_backoff_s: 2.0
+  staleness_timeout_s: 3.0
+  sensor_keys: ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
+
+motor_rc_link:
+  device: "/dev/ttyUSB0"
+  baud: 115200
+  reconnect_backoff_s: 2.0
+  staleness_timeout_s: 1.0
+
+navigation:
+  max_motor_power: 30
+  default_cruise_power: 18
+  waypoint_arrival_radius_m: 2.0
+  steering_k: 0.6
+  nav_tick_interval_s: 4.0
+  motor_heartbeat_hz: 5.0
+
+dwell:
+  duration_s: 30
+  sample_interval_s: 2
+
+telemetry:
+  websocket_broadcast_hz: 3.0
+  periodic_log_interval_s: 20        # log sensors locally to SQLite every 20 s
+
+safety:
+  geofence_radius_m: 150
+  gps_loss_watchdog_timeout_s: 5
+  max_mission_runtime_s: 1800
+
+logger:
+  db_path: "nav_log.db"
+
+firebase:
+  enabled: false
+  credentials_path: "firebase-service-account.json"
+  database_url: ""
+  live_path: "live_telemetry"
+  missions_path: "missions"
+  live_push_hz: 1.0
+
+gcs_lat: 12.91686
+gcs_lon: 77.48698
+
+supabase:
+  enabled: true
+  url: "https://YOUR_PROJECT_ID.supabase.co"
+  key: ""                                # service_role key (or env SUPABASE_KEY)
+  telemetry_push_hz: 1.0                 # live position/state stream for the map
+  command_poll_hz: 2.0
+  sensor_batch_interval_s: 120           # batch-upload sensor readings every 2 min
+  system_push_hz: 1.0                    # Pi processing info (pi_system) rate

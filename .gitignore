@@ -1,0 +1,26 @@
+# ─── Secrets / credentials (NEVER commit) ─────────────────────
+*.service-account.json
+*service-account*.json
+*.secret*.json
+firebase-service-account.json
+
+# ─── Environment files ─────────────────────────────────────────
+.env
+.env.local
+config.local.yaml
+nav_service/config.yaml
+lake-bot/nav_service/config.yaml
+
+# ─── Runtime artifacts ────────────────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# ─── OS / editor ──────────────────────────────────────────────
+.DS_Store
+node_modules/

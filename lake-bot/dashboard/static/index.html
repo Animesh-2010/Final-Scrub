@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LAKE BOT NAV — Mission Planner</title>
+  <meta name="description" content="Autonomous lake bot mission planner and live telemetry dashboard. Plan GPS waypoints, monitor real-time navigation, and control the bot." />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Local styles -->
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ===== HEADER ===================================================== -->
+<header id="main-header">
+  <div id="header-left">
+    <div id="header-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="14" cy="14" r="12" stroke="#2dd4a7" stroke-width="2"/>
+        <path d="M14 6 L18 20 L14 17 L10 20 Z" fill="#2dd4a7"/>
+      </svg>
+    </div>
+    <h1 id="header-title">LAKE BOT NAV <span class="dim">—</span> Mission Planner</h1>
+  </div>
+  <div id="header-center">
+    <div id="status-dot" class="dot-idle"></div>
+    <span id="status-label">IDLE</span>
+  </div>
+  <div id="header-right">
+    <div id="pi-badge" class="badge-offline">
+      <span class="badge-dot"></span>
+      <span id="pi-badge-text">PI OFFLINE</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ================================================ -->
+<div id="layout">
+
+  <!-- ===== SIDEBAR ================================================= -->
+  <aside id="sidebar">
+
+    <!-- Map layer toggle -->
+    <section class="sidebar-section" id="section-map-layers">
+      <div class="section-label">Map Layer</div>
+      <div class="btn-group">
+        <button id="btn-street" class="layer-btn active" onclick="setLayer('street')">STREET</button>
+        <button id="btn-satellite" class="layer-btn" onclick="setLayer('satellite')">SATELLITE</button>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Ground Control Station -->
+    <section class="sidebar-section" id="section-gcs">
+      <div class="section-label">Ground Control Station</div>
+      <button id="btn-set-gcs" class="action-btn" onclick="toggleGcsMode()">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="#2dd4a7" stroke-width="1.5"/><circle cx="7" cy="7" r="2" fill="#2dd4a7"/></svg>
+        Set GCS — click map to place
+      </button>
+      <div id="gcs-info" class="info-text hidden">
+        <span class="label-small">LAT</span> <span id="gcs-lat-val">—</span>
+        <span class="label-small ml">LON</span> <span id="gcs-lon-val">—</span>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Mission Segments -->
+    <section class="sidebar-section" id="section-mission">
+      <div class="section-label">Mission Segments</div>
+      <button id="btn-add-path" class="action-btn" onclick="togglePathMode()">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="7" y1="2" x2="7" y2="12" stroke="#2dd4a7" stroke-width="1.5"/><line x1="2" y1="7" x2="12" y2="7" stroke="#2dd4a7" stroke-width="1.5"/></svg>
+        + Path
+      </button>
+      <ul id="path-list"></ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Mission Stats -->
+    <section class="sidebar-section" id="section-stats">
+      <div class="section-label">Mission Stats</div>
+      <div class="stats-grid">
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-waypoints">0</div>
+          <div class="stat-label">NAV WAYPOINTS</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-distance">0 m</div>
+          <div class="stat-label">NAV DISTANCE</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-gcs">UNSET</div>
+          <div class="stat-label">GCS</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">0</div>
+          <div class="stat-label">COVERAGE ZONES</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Vehicle Speed -->
+    <section class="sidebar-section" id="section-speed">
+      <div class="section-label">Vehicle Speed</div>
+      <div class="slider-row">
+        <input
+          type="range"
+          id="speed-slider"
+          min="0"
+          max="30"
+          value="18"
+          step="1"
+          oninput="onSpeedChange(this.value)"
+        />
+        <span id="speed-value" class="mono">18</span>
+      </div>
+      <div class="slider-labels">
+        <span>0</span><span>30</span>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Simulation Controls -->
+    <section class="sidebar-section" id="section-controls">
+      <div class="section-label">Simulation Controls</div>
+      <div class="control-btns">
+        <button id="btn-start" class="ctrl-btn btn-start" onclick="cmdStart()">
+          <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="3,1 11,6 3,11" fill="currentColor"/></svg>
+          START
+        </button>
+        <button id="btn-pause" class="ctrl-btn btn-pause" onclick="cmdPause()">
+          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="1" width="3" height="10" fill="currentColor"/><rect x="7" y="1" width="3" height="10" fill="currentColor"/></svg>
+          PAUSE
+        </button>
+        <button id="btn-stop" class="ctrl-btn btn-stop" onclick="cmdStop()">
+          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="currentColor"/></svg>
+          STOP
+        </button>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Live Telemetry Panel -->
+    <section class="sidebar-section" id="section-telemetry">
+      <div class="section-label">Live Telemetry</div>
+      <div class="telem-grid">
+        <div class="telem-row">
+          <span class="telem-label">HEADING</span>
+          <span class="telem-val mono" id="t-heading">—°</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">SPEED</span>
+          <span class="telem-val mono" id="t-speed">— m/s</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">SAT</span>
+          <span class="telem-val mono" id="t-sat">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">FIX</span>
+          <span class="telem-val mono" id="t-fix">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">L PWR</span>
+          <span class="telem-val mono" id="t-left">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">R PWR</span>
+          <span class="telem-val mono" id="t-right">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">WP IDX</span>
+          <span class="telem-val mono" id="t-wp">—</span>
+        </div>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ===== MAP ===================================================== -->
+  <main id="map-container">
+    <div id="map"></div>
+  </main>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

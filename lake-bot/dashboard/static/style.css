@@ -1,0 +1,602 @@
+/* ============================================================
+   Lake Bot Mission Planner — style.css
+   Dark theme: #0d1117 background, #2dd4a7 teal accent
+   Font: JetBrains Mono (monospace labels) + Inter (body)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ─── CSS Custom Properties ─────────────────────────────────── */
+:root {
+  --bg-base:        #0d1117;
+  --bg-surface:     #161b22;
+  --bg-elevated:    #1c2128;
+  --bg-hover:       #21262d;
+  --border:         #30363d;
+  --border-bright:  #444c56;
+
+  --teal:           #2dd4a7;
+  --teal-dim:       #1a8a6c;
+  --teal-glow:      rgba(45, 212, 167, 0.15);
+
+  --orange:         #f97316;
+  --red:            #ef4444;
+  --amber:          #f59e0b;
+  --blue:           #3b82f6;
+
+  --text-primary:   #e6edf3;
+  --text-secondary: #8b949e;
+  --text-dim:       #484f58;
+
+  --font-body:      'Inter', system-ui, sans-serif;
+  --font-mono:      'JetBrains Mono', 'Courier New', monospace;
+
+  --sidebar-w:      300px;
+  --header-h:       54px;
+  --radius:         6px;
+  --radius-lg:      10px;
+  --transition:     150ms ease;
+}
+
+/* ─── Reset ─────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 4px; }
+
+/* ─── Header ─────────────────────────────────────────────────── */
+#main-header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--header-h);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  z-index: 1000;
+  backdrop-filter: blur(8px);
+}
+
+#header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#header-logo svg { flex-shrink: 0; }
+
+#header-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+#header-title .dim { color: var(--text-dim); }
+
+#header-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Status dot */
+.dot-idle        { --dot-color: var(--text-secondary); }
+.dot-running     { --dot-color: var(--teal); }
+.dot-paused      { --dot-color: var(--amber); }
+.dot-complete    { --dot-color: var(--blue); }
+.dot-stopped     { --dot-color: var(--red); }
+.dot-geofence    { --dot-color: var(--orange); }
+.dot-gpslost     { --dot-color: var(--red); }
+
+#status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dot-color, var(--text-secondary));
+  box-shadow: 0 0 8px var(--dot-color, transparent);
+  transition: background var(--transition), box-shadow var(--transition);
+}
+
+#status-dot.dot-running {
+  animation: pulse-ring 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(45, 212, 167, 0.5); }
+  50%       { box-shadow: 0 0 0 6px rgba(45, 212, 167, 0); }
+}
+
+#status-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-primary);
+}
+
+/* Pi connection badge */
+#pi-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border: 1px solid;
+  transition: all var(--transition);
+}
+
+.badge-online {
+  border-color: var(--teal-dim);
+  color: var(--teal);
+  background: var(--teal-glow);
+}
+
+.badge-offline {
+  border-color: var(--border);
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.badge-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-online .badge-dot {
+  animation: badge-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes badge-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* ─── Main Layout ────────────────────────────────────────────── */
+#layout {
+  display: flex;
+  height: calc(100vh - var(--header-h));
+  margin-top: var(--header-h);
+}
+
+/* ─── Sidebar ────────────────────────────────────────────────── */
+#sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.sidebar-section {
+  padding: 10px 14px;
+}
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 14px;
+}
+
+/* ─── Button groups & action buttons ─────────────────────────── */
+.btn-group {
+  display: flex;
+  gap: 4px;
+}
+
+.layer-btn {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.layer-btn:hover {
+  border-color: var(--teal-dim);
+  color: var(--teal);
+}
+
+.layer-btn.active {
+  background: var(--teal-glow);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border-bright);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+}
+
+.action-btn:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: var(--teal-glow);
+}
+
+.action-btn.active {
+  border-color: var(--teal);
+  border-style: solid;
+  color: var(--teal);
+  background: var(--teal-glow);
+}
+
+/* Info text below GCS button */
+.info-text {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-primary);
+}
+
+.label-small {
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ml { margin-left: 8px; }
+
+.hidden { display: none !important; }
+
+/* ─── Path list ──────────────────────────────────────────────── */
+#path-list {
+  list-style: none;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.path-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-primary);
+  gap: 4px;
+}
+
+.path-item-name { flex: 1; }
+
+.path-controls {
+  display: flex;
+  gap: 2px;
+}
+
+.path-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  transition: color var(--transition);
+}
+
+.path-btn:hover { color: var(--teal); }
+.path-btn.del:hover { color: var(--red); }
+
+/* ─── Stats Grid ─────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.stat-tile {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--teal);
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ─── Speed Slider ───────────────────────────────────────────── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#speed-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--teal);
+}
+
+#speed-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 8px var(--teal-glow);
+  cursor: pointer;
+  transition: box-shadow var(--transition);
+}
+
+#speed-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 14px rgba(45, 212, 167, 0.5);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--teal);
+  min-width: 24px;
+  text-align: right;
+}
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* ─── Simulation Controls ────────────────────────────────────── */
+.control-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.ctrl-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 4px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.ctrl-btn:active { transform: scale(0.96); }
+
+.btn-start {
+  background: var(--teal-glow);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.btn-start:hover {
+  background: rgba(45, 212, 167, 0.25);
+  box-shadow: 0 0 12px var(--teal-glow);
+}
+
+.btn-pause {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.btn-pause:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.btn-stop {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.btn-stop:hover {
+  background: rgba(239, 68, 68, 0.2);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+/* ─── Telemetry grid ─────────────────────────────────────────── */
+.telem-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telem-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.telem-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.telem-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+/* ─── Map ────────────────────────────────────────────────────── */
+#map-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+  background: #0d1117;
+}
+
+/* Override Leaflet dark styling */
+.leaflet-container {
+  background: #0d1117 !important;
+  font-family: var(--font-body);
+}
+
+.leaflet-tile-pane {
+  filter: brightness(0.85) saturate(0.9);
+}
+
+/* Custom marker tooltip */
+.leaflet-tooltip {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  border-radius: var(--radius);
+  padding: 3px 7px;
+  box-shadow: none;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: var(--border);
+}
+
+/* Waypoint numbered marker */
+.wp-marker {
+  background: var(--teal);
+  color: #000;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
+.gcs-marker {
+  background: var(--orange);
+  color: #fff;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  letter-spacing: 0.05em;
+}
+
+/* ─── Cursor states ──────────────────────────────────────────── */
+body.mode-gcs #map   { cursor: crosshair !important; }
+body.mode-path #map  { cursor: cell !important; }

@@ -1,0 +1,7 @@
+pyserial==3.5
+pynmea2==1.19.0
+smbus2==0.4.3
+gpiozero==2.0.1
+lgpio==0.2.2.0
+websockets==12.0
+PyYAML==6.0.1

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCRUB v4 — Mission Control</title>
+  <meta name="description" content="SCRUB v4 autonomous lake water-quality boat — live mission control dashboard." />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Supabase JS v2 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+  <!-- Dashboard styles -->
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<!-- ===== HEADER ===================================================== -->
+<header id="main-header">
+  <div id="header-left">
+    <div id="header-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <circle cx="14" cy="14" r="12" stroke="#2dd4a7" stroke-width="2"/>
+        <path d="M14 5 L18 21 L14 17 L10 21 Z" fill="#2dd4a7"/>
+        <!-- water waves -->
+        <path d="M6 20 Q10 17 14 20 Q18 23 22 20" stroke="#2dd4a7" stroke-width="1.2" fill="none" opacity="0.6"/>
+      </svg>
+    </div>
+    <h1 id="header-title">SCRUB v4 <span class="dim">—</span> Mission Control</h1>
+  </div>
+
+  <div id="header-center">
+    <div class="dot dot-idle" id="status-dot"></div>
+    <span id="status-label">IDLE</span>
+  </div>
+
+  <div id="header-right">
+    <div id="pi-badge" class="badge badge-offline">
+      <span class="badge-dot"></span>
+      <span id="pi-badge-text">PI OFFLINE</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ================================================ -->
+<div id="layout">
+
+  <!-- ===== SIDEBAR =============================================== -->
+  <aside id="sidebar">
+
+    <!-- Map Layer -->
+    <section class="sidebar-section">
+      <div class="section-label">Map Layer</div>
+      <div class="btn-group">
+        <button id="btn-street"    class="layer-btn active" onclick="setLayer('street')">STREET</button>
+        <button id="btn-satellite" class="layer-btn"        onclick="setLayer('satellite')">SATELLITE</button>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- GCS -->
+    <section class="sidebar-section">
+      <div class="section-label">Ground Control Station</div>
+      <button id="btn-set-gcs" class="action-btn" onclick="toggleGcsMode()">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5" stroke="#2dd4a7" stroke-width="1.5"/>
+          <circle cx="7" cy="7" r="2" fill="#2dd4a7"/>
+        </svg>
+        Set GCS — click map to place
+      </button>
+      <div id="gcs-info" class="info-text hidden">
+        <span class="label-small">LAT</span> <span id="gcs-lat-val">—</span>
+        <span class="label-small ml">LON</span> <span id="gcs-lon-val">—</span>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Mission Planning -->
+    <section class="sidebar-section">
+      <div class="section-label">Mission Waypoints</div>
+      <button id="btn-add-path" class="action-btn" onclick="togglePathMode()">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+          <line x1="7" y1="2" x2="7" y2="12" stroke="#2dd4a7" stroke-width="1.5"/>
+          <line x1="2" y1="7" x2="12" y2="7" stroke="#2dd4a7" stroke-width="1.5"/>
+        </svg>
+        + Add Path
+      </button>
+      <ul id="path-list"></ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Stats -->
+    <section class="sidebar-section">
+      <div class="section-label">Mission Stats</div>
+      <div class="stats-grid">
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-waypoints">0</div>
+          <div class="stat-label">Waypoints</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-distance">0 m</div>
+          <div class="stat-label">Nav Distance</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-gcs">UNSET</div>
+          <div class="stat-label">GCS</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-wp-idx">—</div>
+          <div class="stat-label">Current WP</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Speed -->
+    <section class="sidebar-section">
+      <div class="section-label">Cruise Speed</div>
+      <div class="slider-row">
+        <input type="range" id="speed-slider" min="0" max="30" value="18" step="1"
+               oninput="onSpeedChange(this.value)" />
+        <span id="speed-value" class="mono">18</span>
+      </div>
+      <div class="slider-labels"><span>0</span><span>30</span></div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Mission Controls -->
+    <section class="sidebar-section">
+      <div class="section-label">Mission Controls</div>
+      <div class="control-btns">
+        <button class="ctrl-btn btn-start" onclick="cmdStart()">
+          <svg width="11" height="11" viewBox="0 0 12 12"><polygon points="2,1 11,6 2,11" fill="currentColor"/></svg>
+          START
+        </button>
+        <button class="ctrl-btn btn-pause" onclick="cmdPause()">
+          <svg width="11" height="11" viewBox="0 0 12 12"><rect x="2" y="1" width="3" height="10" fill="currentColor"/><rect x="7" y="1" width="3" height="10" fill="currentColor"/></svg>
+          PAUSE
+        </button>
+        <button class="ctrl-btn btn-stop" onclick="cmdStop()">
+          <svg width="11" height="11" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="currentColor"/></svg>
+          STOP
+        </button>
+        <button class="ctrl-btn btn-estop" onclick="cmdEmergencyStop()">
+          ⚡ EMERGENCY STOP
+        </button>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Live Telemetry -->
+    <section class="sidebar-section">
+      <div class="section-label">Live Telemetry</div>
+      <div class="telem-grid">
+        <div class="telem-row">
+          <span class="telem-label">HEADING</span>
+          <span class="telem-val" id="t-heading">—°</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">SPEED</span>
+          <span class="telem-val" id="t-speed">— m/s</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">SATELLITES</span>
+          <span class="telem-val" id="t-sat">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">GPS FIX</span>
+          <span class="telem-val" id="t-fix">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">L MOTOR</span>
+          <span class="telem-val" id="t-left">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">R MOTOR</span>
+          <span class="telem-val" id="t-right">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">TGT BEARING</span>
+          <span class="telem-val" id="t-bearing">—°</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">DIST TO WP</span>
+          <span class="telem-val" id="t-dist">— m</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">MODE</span>
+          <span class="telem-val" id="t-mode">—</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Pi Processing Info -->
+    <section class="sidebar-section">
+      <div class="section-label">Raspberry Pi Processing</div>
+      <div class="telem-grid">
+        <div class="telem-row">
+          <span class="telem-label">CPU</span>
+          <span class="telem-val" id="p-cpu">—%</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">RAM</span>
+          <span class="telem-val" id="p-ram">—%</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">TEMP</span>
+          <span class="telem-val" id="p-temp">—°C</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">UPTIME</span>
+          <span class="telem-val" id="p-uptime">—</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">NAV TICK</span>
+          <span class="telem-val" id="p-navtick">— ms</span>
+        </div>
+        <div class="telem-row">
+          <span class="telem-label">LAST ERROR</span>
+          <span class="telem-val" id="p-error">—</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Sensor Data -->
+    <section class="sidebar-section">
+      <div class="section-label">Water Quality Sensors</div>
+      <div class="sensor-grid">
+        <div class="sensor-tile" id="s-ph">
+          <div class="sensor-key">pH</div>
+          <div class="sensor-value" id="sv-ph">—<span class="sensor-unit"></span></div>
+        </div>
+        <div class="sensor-tile" id="s-tds">
+          <div class="sensor-key">TDS</div>
+          <div class="sensor-value" id="sv-tds">—<span class="sensor-unit">ppm</span></div>
+        </div>
+        <div class="sensor-tile" id="s-turb">
+          <div class="sensor-key">Turbidity</div>
+          <div class="sensor-value" id="sv-turb">—<span class="sensor-unit">NTU</span></div>
+        </div>
+        <div class="sensor-tile" id="s-wtemp">
+          <div class="sensor-key">Water Temp</div>
+          <div class="sensor-value" id="sv-wtemp">—<span class="sensor-unit">°C</span></div>
+        </div>
+        <div class="sensor-tile" id="s-atemp">
+          <div class="sensor-key">Air Temp</div>
+          <div class="sensor-value" id="sv-atemp">—<span class="sensor-unit">°C</span></div>
+        </div>
+        <div class="sensor-tile" id="s-hum">
+          <div class="sensor-key">Humidity</div>
+          <div class="sensor-value" id="sv-hum">—<span class="sensor-unit">%</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- Mission History -->
+    <section class="sidebar-section">
+      <div class="section-label">Mission History</div>
+      <button class="btn-refresh" onclick="loadHistory()">↻ Refresh History</button>
+      <button class="btn-refresh" onclick="loadSensorHistory()">📈 Sensor History</button>
+      <div id="history-list">
+        <span style="color:var(--text-muted);font-size:11px">No missions yet</span>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ===== MAP ===================================================== -->
+  <main id="map-container">
+    <div id="map"></div>
+
+    <!-- Map overlay chips (top-right) -->
+    <div id="map-overlay">
+      <div class="overlay-chip" id="chip-lat">LAT <span id="ov-lat">—</span></div>
+      <div class="overlay-chip" id="chip-lon">LON <span id="ov-lon">—</span></div>
+    </div>
+  </main>
+
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="./app.js"></script>
+</body>
+</html>
