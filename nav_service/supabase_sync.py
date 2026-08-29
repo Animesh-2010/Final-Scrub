@@ -80,6 +80,7 @@ class SupabaseSync:
         self._sensor_batch_interval_s = max(1.0, sensor_batch_interval_s)
 
         self._client: Optional[Any] = None  # supabase.Client
+        self._client_lock = threading.RLock()   # guards client rebuild across threads
         self._running = False
 
         # Telemetry push queue (asyncio → push thread)
@@ -181,6 +182,40 @@ class SupabaseSync:
         log.info("SupabaseSync stopped")
 
     # ------------------------------------------------------------------
+    # Thread-safe request helper
+    # ------------------------------------------------------------------
+
+    def _execute(self, fn, *, attempts: int = 2):
+        """
+        Run a supabase query callable. On a connection-level error the shared
+        httpx client may be left in a stale "Server disconnected" state, so the
+        client is rebuilt once and the call retried. Serialised per-thread by
+        the client lock to avoid concurrent-use races on the httpx session.
+        """
+        import httpx
+
+        def _conn_error(exc) -> bool:
+            return isinstance(exc, (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.LocalProtocolError, httpx.TransportError))
+
+        last_exc = None
+        for attempt in range(attempts):
+            with self._client_lock:
+                client = self._client
+                try:
+                    return fn(client)
+                except Exception as exc:
+                    last_exc = exc
+                    if not _conn_error(exc) or attempt >= attempts - 1:
+                        raise
+                    # Rebuild the client to recover from a dead connection
+                    try:
+                        self._client = create_client(self._url, self._key)
+                        log.warning("SupabaseSync: connection error — rebuilt client")
+                    except Exception as rebuild_exc:
+                        log.warning(f"SupabaseSync: failed to rebuild client: {rebuild_exc}")
+        raise last_exc
+
+    # ------------------------------------------------------------------
     # Telemetry push (called from asyncio broadcast loop)
     # ------------------------------------------------------------------
 
@@ -213,7 +248,7 @@ class SupabaseSync:
                     break
 
                 row = self._build_telemetry_row(telem)
-                self._client.table("telemetry").insert(row).execute()
+                self._execute(lambda c: c.table("telemetry").insert(row).execute())
 
             except queue.Empty:
                 pass  # nothing to push — loop again
@@ -294,7 +329,7 @@ class SupabaseSync:
 
     def _flush_sensor_batch(self, batch: list[dict]) -> None:
         try:
-            self._client.table("sensor_readings").insert(batch).execute()
+            self._execute(lambda c: c.table("sensor_readings").insert(batch).execute())
             log.info(f"SupabaseSync: uploaded batch of {len(batch)} sensor readings")
         except Exception as exc:
             log.warning(f"SupabaseSync sensor batch push error: {exc}")
@@ -327,7 +362,7 @@ class SupabaseSync:
                 row = self._system_queue.get(timeout=self._system_interval)
                 if row is None:  # sentinel
                     break
-                self._client.table("pi_system").insert(row).execute()
+                self._execute(lambda c: c.table("pi_system").insert(row).execute())
             except queue.Empty:
                 pass
             except Exception as exc:
@@ -348,13 +383,15 @@ class SupabaseSync:
         log.debug("supabase-poll thread started")
         while self._running:
             try:
-                result = (
-                    self._client.table("commands")
-                    .select("id, type, payload")
-                    .eq("executed", False)
-                    .order("id")
-                    .limit(20)
-                    .execute()
+                result = self._execute(
+                    lambda c: (
+                        c.table("commands")
+                        .select("id, type, payload")
+                        .eq("executed", False)
+                        .order("id")
+                        .limit(20)
+                        .execute()
+                    )
                 )
                 rows = result.data or []
 
@@ -363,9 +400,11 @@ class SupabaseSync:
                     # Mark executed BEFORE dispatching — prevent double-dispatch
                     # even if the process crashes between poll and drain.
                     executed_at = datetime.now(timezone.utc).isoformat()
-                    self._client.table("commands").update(
-                        {"executed": True, "executed_at": executed_at}
-                    ).in_("id", ids).execute()
+                    self._execute(
+                        lambda c: c.table("commands").update(
+                            {"executed": True, "executed_at": executed_at}
+                        ).in_("id", ids).execute()
+                    )
 
                     with self._pending_lock:
                         self._pending_commands.extend(rows)
@@ -554,12 +593,14 @@ class SupabaseSync:
         if not self._enabled:
             raise RuntimeError("SupabaseSync disabled — cannot fetch mission waypoints")
 
-        result = (
-            self._client.table("mission_waypoints")
-            .select("lat, lon")
-            .eq("mission_id", mission_id)
-            .order("seq")
-            .execute()
+        result = self._execute(
+            lambda c: (
+                c.table("mission_waypoints")
+                .select("lat, lon")
+                .eq("mission_id", mission_id)
+                .order("seq")
+                .execute()
+            )
         )
         rows = result.data or []
         return [{"lat": float(r["lat"]), "lon": float(r["lon"])} for r in rows]
@@ -569,12 +610,14 @@ class SupabaseSync:
         if not self._enabled:
             return None
         try:
-            result = (
-                self._client.table("missions")
-                .select("*")
-                .eq("id", mission_id)
-                .limit(1)
-                .execute()
+            result = self._execute(
+                lambda c: (
+                    c.table("missions")
+                    .select("*")
+                    .eq("id", mission_id)
+                    .limit(1)
+                    .execute()
+                )
             )
             rows = result.data or []
             return rows[0] if rows else None
