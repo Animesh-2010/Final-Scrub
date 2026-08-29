@@ -22,8 +22,8 @@ sensor_gps_link:
 # from this device.
 gps:
   enabled: true
-  backend: "pyserial"                # pyserial | picocom
-  picocom_cmd: "sudo picocom -b 9600 /dev/serial0"   # only used when backend=picocom
+  backend: "picocom"                # pyserial | picocom
+  picocom_cmd: "sudo picocom -b 9600 /dev/ttyAMA0"   # only used when backend=picocom
   device: "/dev/ttyAMA0"   # GPIO UART — GPS module on Pi GPIO pins
   baud: 9600
   reconnect_backoff_s: 2.0
