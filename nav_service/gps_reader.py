@@ -54,6 +54,7 @@ class GpsReader:
         self._picocom_cmd = picocom_cmd or f"sudo picocom -b {baud} {device}"
         self._serial = None
         self._proc: Optional[subprocess.Popen] = None
+        self._pty_pair: Optional[int] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
@@ -90,12 +91,7 @@ class GpsReader:
 
     def _open_picocom(self) -> None:
         try:
-            self._proc = subprocess.Popen(
-                shlex.split(self._picocom_cmd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-            )
+            self._pty_pair = self._spawn_picocom()
         except Exception as exc:
             log.warning(f"GpsReader: could not start picocom — GPS source disabled: {exc}")
             return
@@ -103,6 +99,24 @@ class GpsReader:
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True, name="pi-gps-reader")
         self._reader_thread.start()
         log.info(f"GpsReader opened via picocom: {self._picocom_cmd}")
+
+    def _spawn_picocom(self) -> None:
+        """
+        picocom is an interactive terminal program and exits if its own
+        stdin/stdout are not a TTY. Give it a real pseudo-terminal (pty).
+        Return the pty master fd; picocom's stdout is the slave side.
+        """
+        import os
+        master_fd, slave_fd = os.openpty()
+        self._proc = subprocess.Popen(
+            shlex.split(self._picocom_cmd),
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        return master_fd
 
     def _read_loop(self) -> None:
         while self._running:
@@ -113,7 +127,17 @@ class GpsReader:
                         self._restart_picocom()
                         time.sleep(self._reconnect_backoff_s)
                         continue
-                    raw = self._proc.stdout.readline()
+                    try:
+                        import os
+                        raw = os.read(self._pty_pair, 2048)
+                    except OSError:
+                        log.warning("GpsReader: picocom pty closed, restarting")
+                        self._restart_picocom()
+                        time.sleep(self._reconnect_backoff_s)
+                        continue
+                    for line in raw.decode("ascii", errors="ignore").splitlines():
+                        self._parse_nmea(line)
+                    continue
                 else:
                     raw = self._serial.readline()
                 if not raw:
@@ -132,13 +156,14 @@ class GpsReader:
                 self._proc.kill()
             except Exception:
                 pass
+        if getattr(self, "_pty_pair", None) is not None:
+            try:
+                import os
+                os.close(self._pty_pair)
+            except Exception:
+                pass
         try:
-            self._proc = subprocess.Popen(
-                shlex.split(self._picocom_cmd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-            )
+            self._pty_pair = self._spawn_picocom()
         except Exception as exc:
             log.warning(f"GpsReader: could not restart picocom: {exc}")
 
@@ -240,6 +265,13 @@ class GpsReader:
                     self._proc.wait(timeout=3.0)
                 except Exception:
                     pass
+            if self._pty_pair is not None:
+                try:
+                    import os
+                    os.close(self._pty_pair)
+                except Exception:
+                    pass
+                self._pty_pair = None
         elif self._serial and self._serial.is_open:
             self._serial.close()
         log.info("GpsReader closed")
