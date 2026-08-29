@@ -124,6 +124,8 @@ def build_components(args: argparse.Namespace, cfg: dict):
                 baud=gps_cfg.get("baud", 9600),
                 reconnect_backoff_s=gps_cfg.get("reconnect_backoff_s", 2.0),
                 staleness_timeout_s=gps_cfg.get("staleness_timeout_s", 5.0),
+                backend=gps_cfg.get("backend", "pyserial"),
+                picocom_cmd=gps_cfg.get("picocom_cmd", None),
             )
 
         arduino = DualArduinoLink(sensor_gps=sensor_gps, motor_rc=motor_rc, gps_reader=gps_reader)
