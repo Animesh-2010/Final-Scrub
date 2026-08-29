@@ -85,6 +85,7 @@ def build_components(args: argparse.Namespace, cfg: dict):
     # Config sections
     sensor_gps_cfg = cfg.get("sensor_gps_link", {})
     motor_rc_cfg = cfg.get("motor_rc_link", {})
+    gps_cfg = cfg.get("gps", {})
     nav_cfg = cfg.get("navigation", {})
     safety_cfg = cfg.get("safety", {})
     telem_cfg = cfg.get("telemetry", {})
@@ -113,7 +114,19 @@ def build_components(args: argparse.Namespace, cfg: dict):
             reconnect_backoff_s=motor_rc_cfg.get("reconnect_backoff_s", 2.0),
             staleness_timeout_s=motor_rc_cfg.get("staleness_timeout_s", 1.0),
         )
-        arduino = DualArduinoLink(sensor_gps=sensor_gps, motor_rc=motor_rc)
+
+        # Optional direct-to-Pi GPS (NMEA) — overrides Arduino GPS fields
+        from gps_reader import GpsReader
+        gps_reader = None
+        if gps_cfg.get("enabled", False):
+            gps_reader = GpsReader(
+                device=gps_cfg.get("device", "/dev/ttyUSB1"),
+                baud=gps_cfg.get("baud", 9600),
+                reconnect_backoff_s=gps_cfg.get("reconnect_backoff_s", 2.0),
+                staleness_timeout_s=gps_cfg.get("staleness_timeout_s", 5.0),
+            )
+
+        arduino = DualArduinoLink(sensor_gps=sensor_gps, motor_rc=motor_rc, gps_reader=gps_reader)
     else:
         # Legacy single-board configuration (backward compatibility)
         arduino_cfg = cfg.get("arduino_link", {})
@@ -337,23 +350,26 @@ async def _periodic_sensor_task(nav, logger, supabase_sync, mission_id_fn, inter
                 note_status_fn()
             state = nav._latest_state
             sensors = dict(state.sensors) if getattr(state, "sensors", None) else {}
-            if sensors:
-                timestamp = time.time()
-                logger.log_sensor(
-                    sensors=sensors,
-                    mission_id=mission_id_fn(),
-                    lat=getattr(state, "gps_lat", None),
-                    lon=getattr(state, "gps_lon", None),
-                    state=nav.state.value if nav.state else None,
-                    timestamp=timestamp,
-                )
-                if supabase_sync.enabled:
-                    supabase_sync.enqueue_sensor_reading({
-                        "mission_id": mission_id_fn(),
-                        "lat": getattr(state, "gps_lat", None),
-                        "lon": getattr(state, "gps_lon", None),
-                        "sensors": sensors,
-                    })
+            # If no sensor data is present, push explicit 0/null values so the
+            # cloud always receives a row instead of nothing.
+            if not sensors:
+                sensors = {"ph": 0.0, "tds": 0.0, "turb": 0.0, "wtemp": 0.0, "atemp": 0.0, "hum": 0.0}
+            timestamp = time.time()
+            logger.log_sensor(
+                sensors=sensors,
+                mission_id=mission_id_fn(),
+                lat=getattr(state, "gps_lat", None),
+                lon=getattr(state, "gps_lon", None),
+                state=nav.state.value if nav.state else None,
+                timestamp=timestamp,
+            )
+            if supabase_sync.enabled:
+                supabase_sync.enqueue_sensor_reading({
+                    "mission_id": mission_id_fn(),
+                    "lat": getattr(state, "gps_lat", None),
+                    "lon": getattr(state, "gps_lon", None),
+                    "sensors": sensors,
+                })
         except Exception as exc:
             log.warning(f"Periodic sensor log error: {exc}")
         await asyncio.sleep(interval_s)

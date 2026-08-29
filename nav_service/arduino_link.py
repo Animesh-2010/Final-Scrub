@@ -340,15 +340,19 @@ class DualArduinoLink:
         self,
         sensor_gps: SensorGpsLink,
         motor_rc: MotorRcLink,
+        gps_reader: Optional[Any] = None,
     ):
         self._sensor_gps = sensor_gps
         self._motor_rc = motor_rc
+        self._gps_reader = gps_reader  # optional Pi-side NMEA GPS source
 
     def open(self) -> None:
-        """Open both links."""
+        """Open all links."""
         self._sensor_gps.open()
         self._motor_rc.open()
-        log.info("DualArduinoLink opened (sensor_gps + motor_rc)")
+        if self._gps_reader is not None:
+            self._gps_reader.open()
+        log.info("DualArduinoLink opened (sensor_gps + motor_rc + gps)")
 
     def get_latest_state(self) -> ArduinoState:
         """
@@ -368,7 +372,7 @@ class DualArduinoLink:
         rc_ch1, rc_ch2 = self._motor_rc.get_rc_channels()
         motor_seq = self._motor_rc.get_seq()
 
-        # Build merged state
+        # Build merged state (sensors/heading from Arduino, mode/RC from motor)
         merged = ArduinoState(
             seq=max(sensor_state.seq, motor_seq),
             gps_lat=sensor_state.gps_lat,
@@ -386,10 +390,25 @@ class DualArduinoLink:
             timestamp=max(sensor_state.timestamp, time.time()),
         )
 
+        # Override GPS with the direct Pi NMEA source if one is configured
+        if self._gps_reader is not None:
+            g = self._gps_reader.get_position()
+            merged.gps_lat = g["lat"]
+            merged.gps_lon = g["lon"]
+            merged.gps_alt = g["alt"]
+            merged.gps_spd = g["spd"]
+            merged.gps_course = g["course"]
+            merged.gps_sats = g["sats"]
+            merged.gps_fix = g["fix"]
+
         # Staleness overrides
         if self._sensor_gps.is_stale():
             merged.gps_fix = 0  # triggers GpsWatchdog in navigation.py
             log.debug("DualArduinoLink: sensor_gps stale → gps_fix=0")
+
+        if self._gps_reader is not None and self._gps_reader.is_stale():
+            merged.gps_fix = 0  # Pi GPS stale → treat as no fix
+            log.debug("DualArduinoLink: pi gps stale → gps_fix=0")
 
         if self._motor_rc.is_stale():
             merged.mode = "MANUAL"  # fail-safe: assume least-trusting option
@@ -406,9 +425,11 @@ class DualArduinoLink:
         self._motor_rc.send_ping()
 
     def close(self) -> None:
-        """Close both links."""
+        """Close all links."""
         self._sensor_gps.close()
         self._motor_rc.close()
+        if self._gps_reader is not None:
+            self._gps_reader.close()
         log.info("DualArduinoLink closed")
 
 

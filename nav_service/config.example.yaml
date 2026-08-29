@@ -17,6 +17,15 @@ sensor_gps_link:
   staleness_timeout_s: 3.0
   sensor_keys: ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
 
+# Optional direct-to-Pi GPS (NMEA over serial). When enabled, boat position
+# (lat/lon/fix/sats/etc) comes from this device instead of the sensor Arduino.
+gps:
+  enabled: false
+  device: "/dev/ttyUSB1"
+  baud: 9600
+  reconnect_backoff_s: 2.0
+  staleness_timeout_s: 5.0
+
 motor_rc_link:
   device: "/dev/ttyUSB0"
   baud: 115200
