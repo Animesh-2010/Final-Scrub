@@ -11,17 +11,18 @@
 # ────────────────────────────────────────────────────────────────
 
 sensor_gps_link:
-  device: "/dev/ttyAMA0"
+  device: "/dev/ttyUSB0"   # sensor Arduino via USB (blue cable)
   baud: 115200
   reconnect_backoff_s: 2.0
   staleness_timeout_s: 3.0
   sensor_keys: ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
 
-# Optional direct-to-Pi GPS (NMEA over serial). When enabled, boat position
-# (lat/lon/fix/sats/etc) comes from this device instead of the sensor Arduino.
+# Direct-to-Pi GPS: GPS module wired to the Raspberry Pi GPIO UART
+# (GPIO 14/15 -> /dev/ttyAMA0). NMEA over serial. Boat position comes
+# from this device.
 gps:
-  enabled: false
-  device: "/dev/ttyUSB1"
+  enabled: true
+  device: "/dev/ttyAMA0"   # GPIO UART — GPS module on Pi GPIO pins
   baud: 9600
   reconnect_backoff_s: 2.0
   staleness_timeout_s: 5.0

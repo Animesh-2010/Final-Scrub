@@ -402,13 +402,19 @@ class DualArduinoLink:
             merged.gps_fix = g["fix"]
 
         # Staleness overrides
-        if self._sensor_gps.is_stale():
+        # When using the direct Pi GPS as the position source, sensor-Arduino
+        # staleness only means "no sensors", not "no GPS" — so only force
+        # gps_fix=0 from the sensor link when there is no dedicated GPS reader.
+        if self._gps_reader is None and self._sensor_gps.is_stale():
             merged.gps_fix = 0  # triggers GpsWatchdog in navigation.py
             log.debug("DualArduinoLink: sensor_gps stale → gps_fix=0")
 
-        if self._gps_reader is not None and self._gps_reader.is_stale():
-            merged.gps_fix = 0  # Pi GPS stale → treat as no fix
-            log.debug("DualArduinoLink: pi gps stale → gps_fix=0")
+        if self._gps_reader is not None:
+            if self._gps_reader.is_stale():
+                merged.gps_fix = 0  # Pi GPS stale → treat as no fix
+                log.debug("DualArduinoLink: pi gps stale → gps_fix=0")
+            else:
+                merged.gps_fix = max(merged.gps_fix, 0)
 
         if self._motor_rc.is_stale():
             merged.mode = "MANUAL"  # fail-safe: assume least-trusting option
