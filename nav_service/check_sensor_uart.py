@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
 """
 check_sensor_uart.py — Standalone Pi-side test to verify the sensor Arduino's
-JSON stream is reaching the Raspberry Pi over the GPIO UART (/dev/ttyAMA0).
+JSON stream is reaching the Raspberry Pi.
 
-The Arduino (sensor_gps_compass_mq.ino) sends the GPIO UART on D0/D1.
-This script opens /dev/ttyAMA0 with pyserial, reads newline-terminated JSON,
-parses it, and prints/live-validates it.
+The Arduino (sensor_gps_compass_mq.ino) outputs newline JSON @ 115200.
+This script opens a serial port (USB by default, auto-detected; falls back to
+the GPIO UART /dev/ttyAMA0), reads the JSON, and prints/live-validates it.
 
-Note: the user must be in the `dialout` group (or run with sudo) to access
-/dev/ttyAMA0. Add user:
+The user must be in the `dialout` group (or run with sudo) to access serial
+ports:
 
     sudo usermod -a -G dialout $USER   # then reboot / re-login
 
 Usage:
-    python3 check_sensor_uart.py                 # use /dev/ttyAMA0 @ 115200
-    python3 check_sensor_uart.py /dev/ttyUSB0    # use another port
+    python3 check_sensor_uart.py                       # auto-detect serial port
+    python3 check_sensor_uart.py /dev/ttyUSB0          # pick a specific port
+    python3 check_sensor_uart.py /dev/ttyACM0
+    python3 check_sensor_uart.py /dev/ttyAMA0          # GPIO UART
 """
 
+import glob
 import json
 import sys
-import time
 
 import serial
 
 
+def find_serial_port() -> str:
+    """Return the first available USB serial port, else ttyAMA0."""
+    for pattern in ("/dev/ttyACM*", "/dev/ttyUSB*"):
+        ports = sorted(glob.glob(pattern))
+        if ports:
+            return ports[0]
+    return "/dev/ttyAMA0"
+
+
 def main() -> None:
-    device = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyAMA0"
+    device = sys.argv[1] if len(sys.argv) > 1 else find_serial_port()
     baud = 115200  # matches Arduino Serial.begin(115200)
 
     print(f"Opening {device} @ {baud} ...")
