@@ -339,6 +339,11 @@ function onTelemetry(row) {
   document.getElementById('t-dist').textContent    = row.distance_to_target != null ? `${row.distance_to_target.toFixed(1)} m` : '— m';
   document.getElementById('t-mode').textContent    = row.effective_mode ?? '—';
 
+  // Motor decision (computed by Pi)
+  document.getElementById('p-motor-dir').textContent   = row.motor_direction || 'S';
+  document.getElementById('p-motor-angle').textContent = row.motor_angle_deg != null ? `${row.motor_angle_deg.toFixed(1)}°` : '—°';
+  document.getElementById('p-motor-rpm').textContent   = row.motor_rpm != null ? `${row.motor_rpm.toFixed(0)} RPM` : '— RPM';
+
   // Waypoint index
   const wpIdx = row.waypoint_index ?? '—';
   const total = row.total_waypoints ?? '—';
@@ -560,6 +565,9 @@ function onSystemInfo(row) {
   set('p-uptime', row.uptime_s   != null ? formatUptime(row.uptime_s) : '—');
   set('p-navtick',row.nav_tick_ms!= null ? `${row.nav_tick_ms.toFixed(1)} ms` : '— ms');
   set('p-error',  row.last_error || '—');
+  set('p-motor-dir',  row.motor_direction || 'S');
+  set('p-motor-angle',row.motor_angle_deg != null ? `${row.motor_angle_deg.toFixed(1)}°` : '—°');
+  set('p-motor-rpm',  row.motor_rpm != null ? `${row.motor_rpm.toFixed(0)} RPM` : '— RPM');
 }
 
 function formatUptime(s) {

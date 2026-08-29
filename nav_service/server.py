@@ -237,6 +237,9 @@ def build_telemetry(nav_ctrl) -> dict:
         "target_bearing": nav_ctrl.target_bearing,
         "heading_error": nav_ctrl.heading_error,
         "distance_to_target": nav_ctrl.distance_to_target,
+        "motor_direction": getattr(nav_ctrl, "motor_direction", "S"),
+        "motor_angle_deg": getattr(nav_ctrl, "motor_angle_deg", 0.0),
+        "motor_rpm": getattr(nav_ctrl, "motor_rpm", 0.0),
         "timestamp": time.time(),
     }
 

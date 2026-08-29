@@ -128,6 +128,9 @@ class SystemMonitor:
             "effective_mode": getattr(nav, "_effective_mode", lambda: None)(),
             "left_power":     getattr(nav, "left_power", None),
             "right_power":    getattr(nav, "right_power", None),
+            "motor_direction": getattr(nav, "motor_direction", None),
+            "motor_angle_deg": getattr(nav, "motor_angle_deg", None),
+            "motor_rpm":       getattr(nav, "motor_rpm", None),
             "nav_tick_ms":    getattr(nav, "last_nav_tick_ms", None),
             "last_error":     last_error,
         }

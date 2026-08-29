@@ -243,6 +243,9 @@ class SupabaseSync:
             "target_bearing":      telem.get("target_bearing"),
             "heading_error":       telem.get("heading_error"),
             "distance_to_target":  telem.get("distance_to_target"),
+            "motor_direction":     telem.get("motor_direction"),
+            "motor_angle_deg":     telem.get("motor_angle_deg"),
+            "motor_rpm":           telem.get("motor_rpm"),
         }
 
     # ------------------------------------------------------------------

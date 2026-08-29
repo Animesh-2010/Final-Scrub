@@ -90,7 +90,11 @@ class SensorGpsLink:
     def open(self) -> None:
         """Open the serial port and start the background reader."""
         import serial
-        self._serial = serial.Serial(self._device, self._baud, timeout=1)
+        try:
+            self._serial = serial.Serial(self._device, self._baud, timeout=1)
+        except Exception as exc:
+            log.warning(f"SensorGpsLink: could not open {self._device} — sensor+GPS link disabled: {exc}")
+            return
         self._running = True
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True, name="sensor-gps-reader")
         self._reader_thread.start()
@@ -212,7 +216,11 @@ class MotorRcLink:
     def open(self) -> None:
         """Open the serial port and start the background reader."""
         import serial
-        self._serial = serial.Serial(self._device, self._baud, timeout=1)
+        try:
+            self._serial = serial.Serial(self._device, self._baud, timeout=1)
+        except Exception as exc:
+            log.warning(f"MotorRcLink: could not open {self._device} — motor link disabled: {exc}")
+            return
         self._running = True
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True, name="motor-rc-reader")
         self._reader_thread.start()

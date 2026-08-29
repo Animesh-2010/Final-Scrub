@@ -178,6 +178,12 @@ class NavigationController:
         self.heading_error: float = 0.0
         self.distance_to_target: float = 0.0
 
+        # Motor decision outputs (computed by the Pi in nav_tick)
+        self.motor_direction: str = "S"      # F/R/L/S (Forward/Rotate-Right/Rotate-Left/Stop)
+        self.motor_angle_deg: float = 0.0    # commanded physical motor angle (0-360)
+        self.motor_rpm: float = 0.0          # estimated/measured motor speed
+        self._steer_deadband_deg: float = 3.0
+
         # Safety helpers
         self._watchdog = GpsWatchdog(timeout_s=gps_loss_timeout_s)
         self._mission_timer = MissionTimer(max_runtime_s=max_mission_runtime_s)
@@ -351,11 +357,13 @@ class NavigationController:
                     log.warning("Manual override during dwell — discarding partial samples")
                     self._dwell_samples.clear()
                 self._transition(NavState.MANUAL, "effective mode is MANUAL")
+            self._set_motor_decision()
             return
 
         # If in MANUAL state and mode returns to AUTO, go to IDLE (require explicit Start)
         if self.state == NavState.MANUAL:
             self._transition(NavState.IDLE, "effective mode returned to AUTO — press Start to resume")
+            self._set_motor_decision()
             return
 
         # If in DWELL: check if dwell timer expired and auto-advance
@@ -406,7 +414,40 @@ class NavigationController:
             self.left_power = 0
             self.right_power = 0
 
+        self._set_motor_decision()
+
         self.last_nav_tick_ms = round((time.monotonic() - _tick_start) * 1000.0, 2)
+
+    def _set_motor_decision(self) -> None:
+        """
+        Derive the R/L/F decision + commanded angle + RPM from the current
+        heading error and held motor power. Called from nav_tick so the
+        dashboard can display what the Pi decided.
+        """
+        error = self.heading_error
+        magnitude = max(abs(self.left_power), abs(self.right_power))
+
+        if self.state != NavState.RUNNING or magnitude == 0:
+            self.motor_direction = "S"
+            self.motor_rpm = 0.0
+        elif error > self._steer_deadband_deg:
+            self.motor_direction = "R"
+        elif error < -self._steer_deadband_deg:
+            self.motor_direction = "L"
+        else:
+            self.motor_direction = "F"
+
+        # Commanded motor angle follows the target bearing (direction to aim)
+        self.motor_angle_deg = round((self.target_bearing + 360) % 360, 1)
+
+        # Estimate RPM from held power (linear map of cruise power 0..max -> 0..200 RPM)
+        max_rpm = 200
+        if self._max_motor_power > 0:
+            self.motor_rpm = round(
+                (magnitude / self._max_motor_power) * max_rpm, 1
+            )
+        else:
+            self.motor_rpm = 0.0
 
     # ------------------------------------------------------------------
     # Motor heartbeat (0.2 s cadence)

@@ -69,7 +69,10 @@ create table if not exists telemetry (
   fix_quality       int,
   target_bearing    float8,
   heading_error     float8,
-  distance_to_target float8
+  distance_to_target float8,
+  motor_direction   text,
+  motor_angle_deg   float8,
+  motor_rpm         float8
 );
 
 create index if not exists telemetry_inserted_at_idx on telemetry (inserted_at desc);
@@ -107,6 +110,9 @@ create table if not exists pi_system (
   effective_mode text,
   left_power     int,
   right_power    int,
+  motor_direction text,
+  motor_angle_deg float8,
+  motor_rpm       float8,
   nav_tick_ms    float8,
   last_error     text
 );
