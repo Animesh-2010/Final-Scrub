@@ -1,0 +1,4 @@
+pyserial
+firebase-admin
+supabase
+python-dotenv

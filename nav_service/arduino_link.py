@@ -582,7 +582,7 @@ class SimulatedArduinoLink:
         base_lat: float = 12.91686,
         base_lon: float = 77.48698,
     ):
-        self._sensor_keys = sensor_keys or ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
+        self._sensor_keys = sensor_keys or ["ph", "tds", "turb", "wtemp", "atemp", "hum", "mq"]
         self._base_lat = base_lat
         self._base_lon = base_lon
         self._latest = ArduinoState()
@@ -610,7 +610,7 @@ class SimulatedArduinoLink:
 
         # Synthetic sensors with realistic ranges + noise
         sensors = {}
-        defaults = {"ph": 7.2, "tds": 350.0, "turb": 15.0, "wtemp": 26.0, "atemp": 31.0, "hum": 65.0}
+        defaults = {"ph": 7.2, "tds": 350.0, "turb": 15.0, "wtemp": 26.0, "atemp": 31.0, "hum": 65.0, "mq": 8.0}
         for k in self._sensor_keys:
             base = defaults.get(k, 0.0)
             sensors[k] = round(base + random.uniform(-0.5, 0.5), 2)

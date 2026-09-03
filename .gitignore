@@ -3,6 +3,9 @@
 *service-account*.json
 *.secret*.json
 firebase-service-account.json
+firebase-key.json
+*firebase*key*.json
+*firebase*.json
 
 # ─── Environment files ─────────────────────────────────────────
 .env

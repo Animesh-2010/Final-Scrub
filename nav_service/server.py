@@ -20,7 +20,8 @@ import time
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ def create_app(
     logger,
     firebase_sync=None,
     broadcast_hz: float = 3.0,
+    dashboard_dir: Optional[str] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     global _state
@@ -111,6 +113,30 @@ def create_app(
             if len(_state["clients"]) == 0 and nav.state.value in ("RUNNING", "PAUSED"):
                 log.warning("Last WS client disconnected — pausing mission")
                 nav.cmd_stop()
+
+    # ------------------------------------------------------------------
+    # Local dashboard (served by the Pi itself over WiFi).
+    # ------------------------------------------------------------------
+
+    if dashboard_dir:
+        import os
+
+        dash = os.path.abspath(dashboard_dir)
+        index_path = os.path.join(dash, "index.html")
+        if os.path.isdir(dash):
+            app.mount(
+                "/static",
+                StaticFiles(directory=dash),
+                name="dashboard-static",
+            )
+
+            @app.get("/", include_in_schema=False)
+            async def dashboard_root():
+                return FileResponse(index_path)
+
+            log.info("Serving local dashboard from %s at http://<pi-ip>:8000/", dash)
+        else:
+            log.warning("dashboard_dir '%s' not found — skipping static dashboard", dash)
 
     return app
 

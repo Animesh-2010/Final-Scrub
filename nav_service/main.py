@@ -181,11 +181,16 @@ def build_components(args: argparse.Namespace, cfg: dict):
     )
 
     # FastAPI app
+    dashboard_dir = cfg.get(
+        "dashboard_dir",
+        os.path.join(os.path.dirname(__file__), "..", "dashboard"),
+    )
     app = create_app(
         nav_ctrl=nav,
         logger=logger,
         firebase_sync=firebase,
         broadcast_hz=telem_cfg.get("websocket_broadcast_hz", 3.0),
+        dashboard_dir=dashboard_dir,
     )
 
     return arduino, nav, logger, firebase, supabase_sync, app, telem_cfg, nav_cfg
