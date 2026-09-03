@@ -348,14 +348,12 @@ function onTelemetry(row) {
   const wpIdx = row.waypoint_index ?? '—';
   const total = row.total_waypoints ?? '—';
   document.getElementById('stat-wp-idx').textContent = (wpIdx !== '—' && total !== '—') ? `${wpIdx+1}/${total}` : '—';
-
-  // Sensors
-  if (row.sensors && typeof row.sensors === 'object') {
-    updateSensors(row.sensors);
-  }
 }
 
 // ─── Sensor panel ─────────────────────────────────────────────────────────────
+// Sensor values are ONLY sourced from the `sensor_readings` log table (the Pi
+// batch-uploads the raw sensor log there). The `telemetry` table has no sensor
+// columns, so we poll the log table rather than read sensors off telemetry.
 const SENSOR_CONFIG = {
   ph:    { id: 'sv-ph',    unit: '',    tile: 's-ph'    },
   tds:   { id: 'sv-tds',   unit: 'ppm', tile: 's-tds'   },
@@ -366,6 +364,7 @@ const SENSOR_CONFIG = {
 };
 
 function updateSensors(sensors) {
+  if (!sensors || typeof sensors !== 'object') return;
   for (const [key, cfg] of Object.entries(SENSOR_CONFIG)) {
     if (sensors[key] != null) {
       const el = document.getElementById(cfg.id);
@@ -378,6 +377,22 @@ function updateSensors(sensors) {
         setTimeout(() => tile.classList.remove('updated'), 600);
       }
     }
+  }
+}
+
+// Pull the latest sensor values from the `sensor_readings` log table.
+async function pollLatestSensorReading() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb
+      .from('sensor_readings')
+      .select('sensors')
+      .order('id', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    if (data && data.length > 0) updateSensors(data[0].sensors);
+  } catch (err) {
+    console.warn('Could not load latest sensor reading:', err);
   }
 }
 
@@ -711,6 +726,7 @@ async function loadSensorHistory(missionId) {
 
 // ─── Freshness polling ────────────────────────────────────────────────────────
 freshnessTimer = setInterval(checkFreshness, 3000);
+setInterval(pollLatestSensorReading, 3000);
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 function init() {
@@ -721,6 +737,7 @@ function init() {
   const ok = initSupabase();
   if (ok) {
     subscribeToTelemetry();
+    pollLatestSensorReading();
     loadHistory();
   }
 }
