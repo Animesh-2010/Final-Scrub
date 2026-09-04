@@ -104,24 +104,27 @@ def build_components(args: argparse.Namespace, cfg: dict):
     db_path = os.path.join(os.path.dirname(__file__), logger_cfg.get("db_path", "nav_log.db"))
     logger = NavLogger(db_path=db_path)
 
-    # Arduino link — dual-board or legacy single-board
+    # Arduino link — dual-board, single-board, or legacy single-board
     if args.simulate:
         arduino = SimulatedArduinoLink()
-    elif sensor_gps_cfg or motor_rc_cfg:
-        # Dual-board configuration
+    elif sensor_gps_cfg:
+        # Sensor+GPS link present — dual-board or single-board differential drive
         sensor_gps = SensorGpsLink(
             device=sensor_gps_cfg.get("device", "/dev/ttyAMA0"),
             baud=sensor_gps_cfg.get("baud", 115200),
             reconnect_backoff_s=sensor_gps_cfg.get("reconnect_backoff_s", 2.0),
-            sensor_keys=sensor_gps_cfg.get("sensor_keys", ["ph", "tds", "turb", "wtemp", "atemp", "hum"]),
+            sensor_keys=sensor_gps_cfg.get("sensor_keys", ["ph", "tds", "turb"]),
             staleness_timeout_s=sensor_gps_cfg.get("staleness_timeout_s", 3.0),
         )
-        motor_rc = MotorRcLink(
-            device=motor_rc_cfg.get("device", "/dev/ttyACM0"),
-            baud=motor_rc_cfg.get("baud", 115200),
-            reconnect_backoff_s=motor_rc_cfg.get("reconnect_backoff_s", 2.0),
-            staleness_timeout_s=motor_rc_cfg.get("staleness_timeout_s", 1.0),
-        )
+        motor_rc = None
+        if motor_rc_cfg:
+            # Dual-board: separate motor+RC Arduino
+            motor_rc = MotorRcLink(
+                device=motor_rc_cfg.get("device", "/dev/ttyACM0"),
+                baud=motor_rc_cfg.get("baud", 115200),
+                reconnect_backoff_s=motor_rc_cfg.get("reconnect_backoff_s", 2.0),
+                staleness_timeout_s=motor_rc_cfg.get("staleness_timeout_s", 1.0),
+            )
 
         # Optional direct-to-Pi GPS (NMEA) — overrides Arduino GPS fields
         from gps_reader import GpsReader
@@ -366,7 +369,7 @@ async def _periodic_sensor_task(nav, logger, supabase_sync, mission_id_fn, inter
             # If no sensor data is present, push explicit 0/null values so the
             # cloud always receives a row instead of nothing.
             if not sensors:
-                sensors = {"ph": 0.0, "tds": 0.0, "turb": 0.0, "wtemp": 0.0, "atemp": 0.0, "hum": 0.0}
+                sensors = {"ph": 0.0, "tds": 0.0, "turb": 0.0}
             timestamp = time.time()
             logger.log_sensor(
                 sensors=sensors,

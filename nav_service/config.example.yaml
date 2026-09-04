@@ -8,32 +8,38 @@
 # Secrets can also be supplied via environment variables:
 #   SUPABASE_URL / SUPABASE_KEY
 #   FIREBASE credentials via `firebase` block below.
+#
+# Dual-board topology:
+#   1. Sensor Arduino  — UART (/dev/ttyAMA0) — GPS + compass + analog sensors
+#   2. Motor+RC Arduino — USB (/dev/ttyACM0) — TB6600 stepper drivers + FlySky RC
 # ────────────────────────────────────────────────────────────────
 
 sensor_gps_link:
-  device: "/dev/ttyUSB0"   # sensor Arduino via USB (blue cable)
+  device: "/dev/ttyAMA0"           # GPIO UART — sensor Arduino (RX only from Pi)
   baud: 115200
   reconnect_backoff_s: 2.0
   staleness_timeout_s: 3.0
-  sensor_keys: ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
+  sensor_keys: ["ph", "tds", "turb"]
+
+motor_rc_link:
+  device: "/dev/ttyACM0"           # USB serial — motor+RC Arduino (read+write)
+  baud: 115200
+  reconnect_backoff_s: 2.0
+  staleness_timeout_s: 1.0
 
 # Direct-to-Pi GPS: GPS module wired to the Raspberry Pi GPIO UART
 # (GPIO 14/15 -> /dev/ttyAMA0). NMEA over serial. Boat position comes
 # from this device.
+# NOTE: If using sensor_gps_link on /dev/ttyAMA0, disable this or
+# use a different port (e.g., /dev/ttyUSB0 for USB GPS adapter).
 gps:
-  enabled: true
+  enabled: false
   backend: "picocom"                # pyserial | picocom
   picocom_cmd: "sudo picocom -b 9600 /dev/ttyAMA0"   # only used when backend=picocom
   device: "/dev/ttyAMA0"   # GPIO UART — GPS module on Pi GPIO pins
   baud: 9600
   reconnect_backoff_s: 2.0
   staleness_timeout_s: 5.0
-
-motor_rc_link:
-  device: "/dev/ttyACM0"
-  baud: 115200
-  reconnect_backoff_s: 2.0
-  staleness_timeout_s: 1.0
 
 navigation:
   max_motor_power: 30

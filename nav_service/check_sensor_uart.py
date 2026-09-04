@@ -3,9 +3,13 @@
 check_sensor_uart.py — Standalone Pi-side test to verify the sensor Arduino's
 JSON stream is reaching the Raspberry Pi.
 
-The Arduino (sensor_gps_compass_mq.ino) outputs newline JSON @ 115200.
-This script opens a serial port (USB by default, auto-detected; falls back to
-the GPIO UART /dev/ttyAMA0), reads the JSON, and prints/live-validates it.
+The Arduino outputs newline JSON @ 115200 containing:
+  GPS (lat, lon, alt, spd, course, sats_view, sats_used, fix),
+  compass heading (hdg) + raw magnetometer (x, y, z),
+  analog sensors (ph, tds, turb), and mode.
+
+This script opens a serial port (auto-detected or specified), reads the JSON,
+and prints/live-validates it.
 
 The user must be in the `dialout` group (or run with sudo) to access serial
 ports:
@@ -67,14 +71,20 @@ def main() -> None:
 
             gps = obj.get("gps", {})
             sensors = obj.get("sensors", {})
+            compass = obj.get("compass", {})
+
+            sats_view = gps.get("sats_view", gps.get("sats", 0))
+            sats_used = gps.get("sats_used", 0)
+
             print(
                 f"[seq {obj.get('seq', '?'):>4}] "
-                f"fix={gps.get('fix', 0)} sats={gps.get('sats', 0)} "
+                f"fix={gps.get('fix', 0)} sats_view={sats_view} sats_used={sats_used} "
                 f"lat={gps.get('lat', 0):.6f} lon={gps.get('lon', 0):.6f} "
-                f"hdg={obj.get('hdg', 0):.1f} | "
+                f"hdg={obj.get('hdg', 0):.1f} "
+                f"compass({compass.get('x', 0)},{compass.get('y', 0)},{compass.get('z', 0)}) | "
                 f"pH={sensors.get('ph', 0):.2f} TDS={sensors.get('tds', 0):.0f}ppm "
-                f"NTU={sensors.get('turb', 0):.1f} MQ={sensors.get('mq', 0):.0f} "
-                f"T={sensors.get('atemp', 0):.1f}C RH={sensors.get('hum', 0):.1f}%"
+                f"NTU={sensors.get('turb', 0):.1f} | "
+                f"mode={obj.get('mode', '?')}"
             )
     except KeyboardInterrupt:
         print("\nStopping.")
