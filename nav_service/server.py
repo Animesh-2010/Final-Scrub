@@ -89,7 +89,6 @@ def create_app(
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
         _state["clients"].add(ws)
-        log.info(f"WS client connected: {ws.client}")
 
         try:
             while True:
@@ -208,9 +207,6 @@ async def _dispatch_command(ws: WebSocket, msg: dict, state: dict) -> None:
     else:
         await _send_error(ws, f"Unknown command type: '{cmd_type}'")
 
-    _cmd_elapsed_ms = (time.monotonic() - _cmd_start) * 1000
-    log.debug(f"Command '{cmd_type}' dispatched in {_cmd_elapsed_ms:.1f} ms")
-
 
 async def _send_error(ws: WebSocket, reason: str) -> None:
     try:
@@ -324,5 +320,4 @@ async def broadcast_loop(state: dict) -> None:
         sleep_time = max(0.0, state["broadcast_interval"] - elapsed)
         if _build_ms > 50:
             log.warning(f"Telemetry build took {_build_ms:.1f} ms (budget: 30 ms)")
-        log.debug(f"Broadcast cycle: build={_build_ms:.1f} ms, total={elapsed*1000:.1f} ms, clients={len(state['clients'])}")
         await asyncio.sleep(sleep_time)

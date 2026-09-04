@@ -145,6 +145,8 @@ class SensorGpsLink:
                 self._latest = state
                 self._last_valid_time = time.time()
 
+            log.debug(f"[UART RX] {line!r}")
+
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"SensorGpsLink: parse error: {exc} in {line!r}")
 
@@ -259,6 +261,8 @@ class MotorRcLink:
                 self._latest_seq = int(obj.get("seq", 0))
                 self._last_valid_time = time.time()
 
+            log.debug(f"[USB RX] {line!r}")
+
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"MotorRcLink: parse error: {exc} in {line!r}")
 
@@ -297,11 +301,14 @@ class MotorRcLink:
         left = max(-100, min(100, int(left)))
         right = max(-100, min(100, int(right)))
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
+        log.debug(f"[USB TX] {msg.strip()!r}")
         self._write(msg)
 
     def send_ping(self) -> None:
         """Send a heartbeat/no-op to keep the link alive."""
-        self._write(json.dumps({"cmd": "ping"}) + "\n")
+        msg = json.dumps({"cmd": "ping"}) + "\n"
+        log.debug(f"[USB TX] {msg.strip()!r}")
+        self._write(msg)
 
     def _write(self, data: str) -> None:
         """Write raw bytes to serial; log and ignore on error."""
@@ -525,6 +532,8 @@ class ArduinoLink:
             with self._lock:
                 self._latest = state
 
+            log.debug(f"[UART RX] {line!r}")
+
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"ArduinoLink: parse error: {exc} in {line!r}")
 
@@ -538,11 +547,14 @@ class ArduinoLink:
         left = max(-100, min(100, int(left)))
         right = max(-100, min(100, int(right)))
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
         self._write(msg)
 
     def send_ping(self) -> None:
         """Send a heartbeat/no-op to keep the link alive."""
-        self._write(json.dumps({"cmd": "ping"}) + "\n")
+        msg = json.dumps({"cmd": "ping"}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
+        self._write(msg)
 
     def _write(self, data: str) -> None:
         """Write raw bytes to serial; log and ignore on error."""

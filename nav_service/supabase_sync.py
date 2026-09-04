@@ -179,6 +179,7 @@ class SupabaseSync:
             self._system_thread.join(timeout=3.0)
         if self._sensor_thread:
             self._sensor_thread.join(timeout=3.0)
+
         log.info("SupabaseSync stopped")
 
     # ------------------------------------------------------------------
@@ -240,7 +241,7 @@ class SupabaseSync:
 
     def _push_loop(self) -> None:
         """Background thread: drain telemetry queue → Supabase INSERT."""
-        log.debug("supabase-push thread started")
+
         while self._running:
             try:
                 telem = self._telemetry_queue.get(timeout=self._telemetry_interval)
@@ -256,7 +257,7 @@ class SupabaseSync:
                 log.warning(f"SupabaseSync push error: {exc}")
                 time.sleep(2.0)  # back off on error
 
-        log.debug("supabase-push thread exiting")
+
 
     @staticmethod
     def _build_telemetry_row(telem: dict) -> dict:
@@ -301,7 +302,7 @@ class SupabaseSync:
 
     def _sensor_loop(self) -> None:
         """Background thread: accumulate sensor readings, flush in batches."""
-        log.debug("supabase-sensor thread started")
+
         batch: list[dict] = []
         last_flush = time.monotonic()
         while self._running:
@@ -325,12 +326,12 @@ class SupabaseSync:
         # Flush any remaining on shutdown
         if batch:
             self._flush_sensor_batch(batch)
-        log.debug("supabase-sensor thread exiting")
+
 
     def _flush_sensor_batch(self, batch: list[dict]) -> None:
         try:
             self._execute(lambda c: c.table("sensor_readings").insert(batch).execute())
-            log.info(f"SupabaseSync: uploaded batch of {len(batch)} sensor readings")
+
         except Exception as exc:
             log.warning(f"SupabaseSync sensor batch push error: {exc}")
 
@@ -356,7 +357,7 @@ class SupabaseSync:
 
     def _system_loop(self) -> None:
         """Background thread: push Pi system info rows to Supabase at ~1 Hz."""
-        log.debug("supabase-system thread started")
+
         while self._running:
             try:
                 row = self._system_queue.get(timeout=self._system_interval)
@@ -368,7 +369,7 @@ class SupabaseSync:
             except Exception as exc:
                 log.warning(f"SupabaseSync system push error: {exc}")
                 time.sleep(2.0)
-        log.debug("supabase-system thread exiting")
+
 
     # ------------------------------------------------------------------
     # Command poll (background thread) + drain (asyncio side)
@@ -380,7 +381,7 @@ class SupabaseSync:
         Adds them to _pending_commands. Marks each as executed immediately
         so we never double-dispatch.
         """
-        log.debug("supabase-poll thread started")
+
         while self._running:
             try:
                 result = self._execute(
@@ -408,7 +409,6 @@ class SupabaseSync:
 
                     with self._pending_lock:
                         self._pending_commands.extend(rows)
-                        log.debug(f"SupabaseSync: queued {len(rows)} command(s) for dispatch")
 
             except Exception as exc:
                 log.warning(f"SupabaseSync poll error: {exc}")
@@ -416,7 +416,7 @@ class SupabaseSync:
 
             time.sleep(self._command_poll_interval)
 
-        log.debug("supabase-poll thread exiting")
+
 
     def drain_commands(self, nav_ctrl) -> None:
         """
@@ -448,7 +448,7 @@ class SupabaseSync:
             except json.JSONDecodeError:
                 payload = {}
 
-        log.info(f"SupabaseSync dispatching command: {cmd_type} payload={payload}")
+
 
         if cmd_type == "load_mission":
             waypoints = payload.get("waypoints", [])
@@ -503,7 +503,7 @@ class SupabaseSync:
             if lat is not None and lon is not None:
                 nav.gcs_lat = float(lat)
                 nav.gcs_lon = float(lon)
-                log.info(f"GCS updated to ({lat}, {lon})")
+
 
         elif cmd_type == "set_manual":
             enabled = payload.get("enabled", False)

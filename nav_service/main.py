@@ -323,8 +323,6 @@ async def _motor_heartbeat_task(nav, hz: float):
         try:
             nav.motor_heartbeat()
             _tick_count += 1
-            if _tick_count % 25 == 0:  # log every ~5 seconds
-                log.debug(f"Motor heartbeat tick #{_tick_count} at {hz} Hz")
         except Exception as exc:
             log.warning(f"Motor heartbeat error: {exc}")
         elapsed = time.monotonic() - start
@@ -515,7 +513,6 @@ async def run(args: argparse.Namespace, cfg: dict) -> None:
         tasks.append(asyncio.create_task(
             _system_push_task(system_monitor, nav, supabase_sync, _mission_id_fn, 1.0 / max(system_push_hz, 0.1))
         ))
-        log.info("Supabase command drain + sensor log + system monitor tasks started")
 
     try:
         import uvicorn
