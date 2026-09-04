@@ -40,6 +40,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("main")
 
+# Suppress noisy HTTP request logs from httpx (supabase-py backend)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Enable DEBUG-level packet logging for Arduino links
+logging.getLogger("arduino_link").setLevel(logging.DEBUG)
+
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -52,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     p.add_argument("--simulate", action="store_true", help="Use SimulatedArduinoLink (no hardware)")
+    p.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging for all modules")
     p.add_argument("--waypoints", default=None, metavar="PATH", help="JSON waypoints file to preload")
     p.add_argument("--autostart", action="store_true", help="Immediately start the mission after loading waypoints")
     return p
@@ -541,6 +549,12 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     cfg = load_config(args.config)
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        for name in ("httpx", "httpcore", "uvicorn", "uvicorn.access"):
+            logging.getLogger(name).setLevel(logging.WARNING)
+        log.debug("Debug logging enabled")
 
     try:
         asyncio.run(run(args, cfg))

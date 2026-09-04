@@ -435,8 +435,7 @@ class SupabaseSync:
             except Exception as exc:
                 log.warning(f"SupabaseSync dispatch error for cmd {cmd}: {exc}")
 
-    @staticmethod
-    def _dispatch(cmd: dict, nav) -> None:
+    def _dispatch(self, cmd: dict, nav) -> None:
         """Route a command dict to the NavigationController."""
         cmd_type = cmd.get("type", "")
         payload  = cmd.get("payload") or {}
