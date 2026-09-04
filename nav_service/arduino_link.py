@@ -1,19 +1,26 @@
 """
 arduino_link.py — UART links to dual Arduino boards for SCRUB v4 nav_service.
 
-Dual-board topology:
-  1. SensorGpsLink  — NEO-M8N GPS + compass + analog sensors (read-only)
-     Connected via Pi GPIO hardware UART (/dev/ttyAMA0).
-  2. MotorRcLink    — TB6600 motor drivers + FlySky RC receiver (read + write)
-     Connected via USB (/dev/ttyACM0 or similar).
+Topology options:
+  A) Dual-board (original design):
+     1. SensorGpsLink  — NEO-M8N GPS + compass + analog sensors (read-only)
+        Connected via Pi GPIO hardware UART (/dev/ttyAMA0).
+     2. MotorRcLink    — TB6600 motor drivers + FlySky RC receiver (read + write)
+        Connected via USB (/dev/ttyACM0 or similar).
 
-Single ArduinoLink class preserved for backward compatibility.
+  B) Single-board (differential drive):
+     1. SensorGpsLink  — all sensors + GPS + compass + motor control
+        Connected via Pi GPIO UART (/dev/ttyAMA0) or USB.
+        Motor commands sent back over the same link.
 
 Arduino -> Pi packet (parsed into ArduinoState):
-  {"seq": int, "gps": {...}, "hdg": float, "sensors": {...},
-   "mode": "AUTO"|"MANUAL", "rc": {"ch1": int, "ch2": int}}
+  {"seq": int, "gps": {...}, "hdg": float,
+   "compass": {"x": int, "y": int, "z": int},
+   "sensors": {...}, "mode": "AUTO"|"MANUAL"}
 
-Pi -> Arduino commands (MotorRcLink only):
+GPS format: {"lat", "lon", "alt", "spd", "course", "sats_view", "sats_used", "fix"}
+
+Pi -> Arduino commands (sent via SensorGpsLink or MotorRcLink):
   {"cmd": "motor", "l": int, "r": int}   (l/r in -100..100)
   {"cmd": "ping"}
 """
@@ -44,9 +51,14 @@ class ArduinoState:
     gps_alt: float = 0.0
     gps_spd: float = 0.0
     gps_course: float = 0.0
-    gps_sats: int = 0
+    gps_sats: int = 0          # total satellites (backward compat)
+    gps_sats_view: int = 0     # satellites in view
+    gps_sats_used: int = 0     # satellites used in fix
     gps_fix: int = 0
-    heading: float = 0.0
+    heading: float = 0.0       # compass heading in degrees
+    compass_x: int = 0         # raw magnetometer X
+    compass_y: int = 0         # raw magnetometer Y
+    compass_z: int = 0         # raw magnetometer Z
     sensors: dict[str, float] = field(default_factory=dict)
     mode: str = "MANUAL"
     rc_ch1: int = 1500
@@ -60,10 +72,12 @@ class ArduinoState:
 
 class SensorGpsLink:
     """
-    Read-only link to the sensor+GPS Arduino.
+    Link to the sensor+GPS Arduino (read + write for single-board setups).
 
-    Reads newline-delimited JSON from /dev/ttyAMA0 containing:
-      GPS coordinates, compass heading, and analog sensor values.
+    Reads newline-delimited JSON from /dev/ttyAMA0 (or USB) containing:
+      GPS coordinates, compass heading (hdg + raw XYZ), analog sensor values,
+      and mode.  Supports sending motor commands and pings back over the
+      same UART link for single-board differential-drive configurations.
     """
 
     def __init__(
@@ -77,7 +91,7 @@ class SensorGpsLink:
         self._device = device
         self._baud = baud
         self._reconnect_backoff_s = reconnect_backoff_s
-        self._sensor_keys = sensor_keys or ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
+        self._sensor_keys = sensor_keys or ["ph", "tds", "turb"]
         self._staleness_timeout_s = staleness_timeout_s
         self._serial = None
         self._latest = ArduinoState()
@@ -116,7 +130,7 @@ class SensorGpsLink:
                 time.sleep(self._reconnect_backoff_s)
 
     def _parse_line(self, line: str) -> None:
-        """Parse one JSON line, extracting GPS, heading, and sensor fields."""
+        """Parse one JSON line, extracting GPS, heading, compass, and sensor fields."""
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
@@ -126,6 +140,14 @@ class SensorGpsLink:
         try:
             gps = obj.get("gps", {})
             sensors = obj.get("sensors", {})
+            compass = obj.get("compass", {})
+
+            # Handle both new format (sats_view/sats_used) and legacy (sats)
+            sats_view = int(gps.get("sats_view", 0))
+            sats_used = int(gps.get("sats_used", 0))
+            sats_legacy = int(gps.get("sats", 0))
+            # Prefer new fields; fall back to legacy total
+            sats_total = sats_used if sats_used else sats_legacy
 
             state = ArduinoState(
                 seq=int(obj.get("seq", 0)),
@@ -134,9 +156,14 @@ class SensorGpsLink:
                 gps_alt=float(gps.get("alt", 0.0)),
                 gps_spd=float(gps.get("spd", 0.0)),
                 gps_course=float(gps.get("course", 0.0)),
-                gps_sats=int(gps.get("sats", 0)),
+                gps_sats=sats_total,
+                gps_sats_view=sats_view,
+                gps_sats_used=sats_used,
                 gps_fix=int(gps.get("fix", 0)),
                 heading=float(obj.get("hdg", 0.0)),
+                compass_x=int(compass.get("x", 0)),
+                compass_y=int(compass.get("y", 0)),
+                compass_z=int(compass.get("z", 0)),
                 sensors={k: float(sensors.get(k, 0.0)) for k in self._sensor_keys},
                 timestamp=time.time(),
             )
@@ -144,6 +171,8 @@ class SensorGpsLink:
             with self._lock:
                 self._latest = state
                 self._last_valid_time = time.time()
+
+            log.debug(f"[UART RX] {line!r}")
 
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"SensorGpsLink: parse error: {exc} in {line!r}")
@@ -167,6 +196,29 @@ class SensorGpsLink:
         elif not self._was_fresh and not stale:
             log.info("SensorGpsLink: RECOVERED — valid packets resuming")
         self._was_fresh = not stale
+
+    def send_motor_command(self, left: int, right: int) -> None:
+        """Send a motor power command to the Arduino (single-board mode)."""
+        left = max(-100, min(100, int(left)))
+        right = max(-100, min(100, int(right)))
+        msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
+        self._write(msg)
+
+    def send_ping(self) -> None:
+        """Send a heartbeat/no-op to keep the link alive."""
+        msg = json.dumps({"cmd": "ping"}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
+        self._write(msg)
+
+    def _write(self, data: str) -> None:
+        """Write raw bytes to serial; log and ignore on error."""
+        if self._serial is None or not self._serial.is_open:
+            return
+        try:
+            self._serial.write(data.encode("ascii"))
+        except Exception as exc:
+            log.warning(f"SensorGpsLink write error: {exc}")
 
     def close(self) -> None:
         """Stop the reader thread and close the serial port."""
@@ -259,6 +311,8 @@ class MotorRcLink:
                 self._latest_seq = int(obj.get("seq", 0))
                 self._last_valid_time = time.time()
 
+            log.debug(f"[USB RX] {line!r}")
+
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"MotorRcLink: parse error: {exc} in {line!r}")
 
@@ -297,11 +351,14 @@ class MotorRcLink:
         left = max(-100, min(100, int(left)))
         right = max(-100, min(100, int(right)))
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
+        log.debug(f"[USB TX] {msg.strip()!r}")
         self._write(msg)
 
     def send_ping(self) -> None:
         """Send a heartbeat/no-op to keep the link alive."""
-        self._write(json.dumps({"cmd": "ping"}) + "\n")
+        msg = json.dumps({"cmd": "ping"}) + "\n"
+        log.debug(f"[USB TX] {msg.strip()!r}")
+        self._write(msg)
 
     def _write(self, data: str) -> None:
         """Write raw bytes to serial; log and ignore on error."""
@@ -328,67 +385,104 @@ class MotorRcLink:
 
 class DualArduinoLink:
     """
-    Composite link merging SensorGpsLink + MotorRcLink into a single
+    Composite link merging SensorGpsLink + optional MotorRcLink into a single
     ArduinoState interface compatible with NavigationController.
+
+    Supports two topologies:
+      A) Dual-board: sensor_gps + motor_rc — GPS/heading from sensor, mode/RC from motor.
+      B) Single-board: sensor_gps only (motor_rc=None) — all fields from one Arduino,
+         motor commands sent back over sensor_gps UART.
 
     Staleness rules:
       - SensorGpsLink stale → gps_fix forced to 0 (triggers GpsWatchdog)
-      - MotorRcLink stale → mode forced to MANUAL (fail-safe default)
+      - MotorRcLink stale (if present) → mode forced to MANUAL (fail-safe default)
     """
 
     def __init__(
         self,
         sensor_gps: SensorGpsLink,
-        motor_rc: MotorRcLink,
+        motor_rc: MotorRcLink | None = None,
         gps_reader: Optional[Any] = None,
     ):
         self._sensor_gps = sensor_gps
         self._motor_rc = motor_rc
         self._gps_reader = gps_reader  # optional Pi-side NMEA GPS source
+        self._single_board = motor_rc is None
 
     def open(self) -> None:
         """Open all links."""
         self._sensor_gps.open()
-        self._motor_rc.open()
+        if self._motor_rc is not None:
+            self._motor_rc.open()
         if self._gps_reader is not None:
             self._gps_reader.open()
-        log.info("DualArduinoLink opened (sensor_gps + motor_rc + gps)")
+        mode = "single-board" if self._single_board else "dual-board"
+        log.info(f"DualArduinoLink opened ({mode})")
 
     def get_latest_state(self) -> ArduinoState:
         """
-        Merge the two sub-links into a single ArduinoState.
+        Merge the sub-links into a single ArduinoState.
 
-        GPS/heading/sensors come from SensorGpsLink.
-        Mode/RC come from MotorRcLink.
+        Single-board mode: all fields come from SensorGpsLink.
+        Dual-board mode: GPS/heading/sensors from SensorGpsLink, mode/RC from MotorRcLink.
         Staleness overrides applied here.
         """
         # Check staleness transitions (logs warnings)
         self._sensor_gps.check_staleness_transition()
-        self._motor_rc.check_staleness_transition()
+        if self._motor_rc is not None:
+            self._motor_rc.check_staleness_transition()
 
-        # Get raw states from each link
+        # Get raw state from sensor link
         sensor_state = self._sensor_gps.get_latest_state()
-        mode = self._motor_rc.get_mode()
-        rc_ch1, rc_ch2 = self._motor_rc.get_rc_channels()
-        motor_seq = self._motor_rc.get_seq()
 
-        # Build merged state (sensors/heading from Arduino, mode/RC from motor)
-        merged = ArduinoState(
-            seq=max(sensor_state.seq, motor_seq),
-            gps_lat=sensor_state.gps_lat,
-            gps_lon=sensor_state.gps_lon,
-            gps_alt=sensor_state.gps_alt,
-            gps_spd=sensor_state.gps_spd,
-            gps_course=sensor_state.gps_course,
-            gps_sats=sensor_state.gps_sats,
-            gps_fix=sensor_state.gps_fix,
-            heading=sensor_state.heading,
-            sensors=sensor_state.sensors,
-            mode=mode,
-            rc_ch1=rc_ch1,
-            rc_ch2=rc_ch2,
-            timestamp=max(sensor_state.timestamp, time.time()),
-        )
+        if self._single_board:
+            # Single-board: everything from sensor link, mode is in the packet
+            merged = ArduinoState(
+                seq=sensor_state.seq,
+                gps_lat=sensor_state.gps_lat,
+                gps_lon=sensor_state.gps_lon,
+                gps_alt=sensor_state.gps_alt,
+                gps_spd=sensor_state.gps_spd,
+                gps_course=sensor_state.gps_course,
+                gps_sats=sensor_state.gps_sats,
+                gps_sats_view=sensor_state.gps_sats_view,
+                gps_sats_used=sensor_state.gps_sats_used,
+                gps_fix=sensor_state.gps_fix,
+                heading=sensor_state.heading,
+                compass_x=sensor_state.compass_x,
+                compass_y=sensor_state.compass_y,
+                compass_z=sensor_state.compass_z,
+                sensors=sensor_state.sensors,
+                mode=sensor_state.mode,
+                timestamp=max(sensor_state.timestamp, time.time()),
+            )
+        else:
+            # Dual-board: merge from both links
+            mode = self._motor_rc.get_mode()
+            rc_ch1, rc_ch2 = self._motor_rc.get_rc_channels()
+            motor_seq = self._motor_rc.get_seq()
+
+            merged = ArduinoState(
+                seq=max(sensor_state.seq, motor_seq),
+                gps_lat=sensor_state.gps_lat,
+                gps_lon=sensor_state.gps_lon,
+                gps_alt=sensor_state.gps_alt,
+                gps_spd=sensor_state.gps_spd,
+                gps_course=sensor_state.gps_course,
+                gps_sats=sensor_state.gps_sats,
+                gps_sats_view=sensor_state.gps_sats_view,
+                gps_sats_used=sensor_state.gps_sats_used,
+                gps_fix=sensor_state.gps_fix,
+                heading=sensor_state.heading,
+                compass_x=sensor_state.compass_x,
+                compass_y=sensor_state.compass_y,
+                compass_z=sensor_state.compass_z,
+                sensors=sensor_state.sensors,
+                mode=mode,
+                rc_ch1=rc_ch1,
+                rc_ch2=rc_ch2,
+                timestamp=max(sensor_state.timestamp, time.time()),
+            )
 
         # Override GPS with the direct Pi NMEA source if one is configured
         if self._gps_reader is not None:
@@ -402,38 +496,42 @@ class DualArduinoLink:
             merged.gps_fix = g["fix"]
 
         # Staleness overrides
-        # When using the direct Pi GPS as the position source, sensor-Arduino
-        # staleness only means "no sensors", not "no GPS" — so only force
-        # gps_fix=0 from the sensor link when there is no dedicated GPS reader.
         if self._gps_reader is None and self._sensor_gps.is_stale():
             merged.gps_fix = 0  # triggers GpsWatchdog in navigation.py
             log.debug("DualArduinoLink: sensor_gps stale → gps_fix=0")
 
         if self._gps_reader is not None:
             if self._gps_reader.is_stale():
-                merged.gps_fix = 0  # Pi GPS stale → treat as no fix
+                merged.gps_fix = 0
                 log.debug("DualArduinoLink: pi gps stale → gps_fix=0")
             else:
                 merged.gps_fix = max(merged.gps_fix, 0)
 
-        if self._motor_rc.is_stale():
+        if self._motor_rc is not None and self._motor_rc.is_stale():
             merged.mode = "MANUAL"  # fail-safe: assume least-trusting option
             log.debug("DualArduinoLink: motor_rc stale → mode=MANUAL")
 
         return merged
 
     def send_motor_command(self, left: int, right: int) -> None:
-        """Forward motor command to MotorRcLink only."""
-        self._motor_rc.send_motor_command(left, right)
+        """Send motor command to the Arduino (dual-board via MotorRcLink, single-board via SensorGpsLink)."""
+        if self._motor_rc is not None:
+            self._motor_rc.send_motor_command(left, right)
+        else:
+            self._sensor_gps.send_motor_command(left, right)
 
     def send_ping(self) -> None:
-        """Forward ping to MotorRcLink only."""
-        self._motor_rc.send_ping()
+        """Send heartbeat/ping to the Arduino."""
+        if self._motor_rc is not None:
+            self._motor_rc.send_ping()
+        else:
+            self._sensor_gps.send_ping()
 
     def close(self) -> None:
         """Close all links."""
         self._sensor_gps.close()
-        self._motor_rc.close()
+        if self._motor_rc is not None:
+            self._motor_rc.close()
         if self._gps_reader is not None:
             self._gps_reader.close()
         log.info("DualArduinoLink closed")
@@ -448,7 +546,7 @@ class ArduinoLink:
     Single-board UART link (original design).
 
     Kept for backward compatibility with existing tests and configurations.
-    For new dual-board setups, use DualArduinoLink instead.
+    For new dual-board or differential-drive setups, use DualArduinoLink instead.
     """
 
     def __init__(
@@ -461,7 +559,7 @@ class ArduinoLink:
         self._device = device
         self._baud = baud
         self._reconnect_backoff_s = reconnect_backoff_s
-        self._sensor_keys = sensor_keys or ["ph", "tds", "turb", "wtemp", "atemp", "hum"]
+        self._sensor_keys = sensor_keys or ["ph", "tds", "turb"]
         self._serial = None
         self._latest = ArduinoState()
         self._lock = threading.Lock()
@@ -504,6 +602,13 @@ class ArduinoLink:
             gps = obj.get("gps", {})
             sensors = obj.get("sensors", {})
             rc = obj.get("rc", {})
+            compass = obj.get("compass", {})
+
+            # Handle both new format (sats_view/sats_used) and legacy (sats)
+            sats_view = int(gps.get("sats_view", 0))
+            sats_used = int(gps.get("sats_used", 0))
+            sats_legacy = int(gps.get("sats", 0))
+            sats_total = sats_used if sats_used else sats_legacy
 
             state = ArduinoState(
                 seq=int(obj.get("seq", 0)),
@@ -512,9 +617,14 @@ class ArduinoLink:
                 gps_alt=float(gps.get("alt", 0.0)),
                 gps_spd=float(gps.get("spd", 0.0)),
                 gps_course=float(gps.get("course", 0.0)),
-                gps_sats=int(gps.get("sats", 0)),
+                gps_sats=sats_total,
+                gps_sats_view=sats_view,
+                gps_sats_used=sats_used,
                 gps_fix=int(gps.get("fix", 0)),
                 heading=float(obj.get("hdg", 0.0)),
+                compass_x=int(compass.get("x", 0)),
+                compass_y=int(compass.get("y", 0)),
+                compass_z=int(compass.get("z", 0)),
                 sensors={k: float(sensors.get(k, 0.0)) for k in self._sensor_keys},
                 mode=str(obj.get("mode", "MANUAL")),
                 rc_ch1=int(rc.get("ch1", 1500)),
@@ -524,6 +634,8 @@ class ArduinoLink:
 
             with self._lock:
                 self._latest = state
+
+            log.debug(f"[UART RX] {line!r}")
 
         except (KeyError, ValueError, TypeError) as exc:
             log.debug(f"ArduinoLink: parse error: {exc} in {line!r}")
@@ -538,11 +650,14 @@ class ArduinoLink:
         left = max(-100, min(100, int(left)))
         right = max(-100, min(100, int(right)))
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
         self._write(msg)
 
     def send_ping(self) -> None:
         """Send a heartbeat/no-op to keep the link alive."""
-        self._write(json.dumps({"cmd": "ping"}) + "\n")
+        msg = json.dumps({"cmd": "ping"}) + "\n"
+        log.debug(f"[UART TX] {msg.strip()!r}")
+        self._write(msg)
 
     def _write(self, data: str) -> None:
         """Write raw bytes to serial; log and ignore on error."""
@@ -573,7 +688,8 @@ class SimulatedArduinoLink:
 
     Generates a random-walk GPS track with configurable waypoints,
     synthetic sensor values with noise, and toggles between AUTO/MANUAL
-    modes on a timer. Modeled on lake-bot's SimulatedGpsDriver.
+    modes on a timer.  Includes compass XYZ and GPS sats_view/sats_used
+    to match the real Arduino packet format.
     """
 
     def __init__(
@@ -582,7 +698,7 @@ class SimulatedArduinoLink:
         base_lat: float = 12.91686,
         base_lon: float = 77.48698,
     ):
-        self._sensor_keys = sensor_keys or ["ph", "tds", "turb", "wtemp", "atemp", "hum", "mq"]
+        self._sensor_keys = sensor_keys or ["ph", "tds", "turb"]
         self._base_lat = base_lat
         self._base_lon = base_lon
         self._latest = ArduinoState()
@@ -610,10 +726,17 @@ class SimulatedArduinoLink:
 
         # Synthetic sensors with realistic ranges + noise
         sensors = {}
-        defaults = {"ph": 7.2, "tds": 350.0, "turb": 15.0, "wtemp": 26.0, "atemp": 31.0, "hum": 65.0, "mq": 8.0}
+        defaults = {"ph": 7.2, "tds": 350.0, "turb": 15.0}
         for k in self._sensor_keys:
             base = defaults.get(k, 0.0)
             sensors[k] = round(base + random.uniform(-0.5, 0.5), 2)
+
+        # Compass: noisy XYZ around the current heading
+        import math
+        rad = math.radians(self._heading)
+        sensors_compass_x = int(-300 * math.sin(rad) + random.uniform(-10, 10))
+        sensors_compass_y = int(300 * math.cos(rad) + random.uniform(-10, 10))
+        sensors_compass_z = int(50 + random.uniform(-5, 5))
 
         # Toggle mode periodically for testing
         if int(elapsed) % 120 < 60:
@@ -629,8 +752,13 @@ class SimulatedArduinoLink:
             gps_spd=0.4 + random.uniform(-0.1, 0.1),
             gps_course=self._heading,
             gps_sats=8,
+            gps_sats_view=10,
+            gps_sats_used=8,
             gps_fix=1,
             heading=self._heading,
+            compass_x=sensors_compass_x,
+            compass_y=sensors_compass_y,
+            compass_z=sensors_compass_z,
             sensors=sensors,
             mode=self._mode,
             rc_ch1=1500,

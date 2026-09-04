@@ -89,7 +89,6 @@ def create_app(
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
         _state["clients"].add(ws)
-        log.info(f"WS client connected: {ws.client}")
 
         try:
             while True:
@@ -208,9 +207,6 @@ async def _dispatch_command(ws: WebSocket, msg: dict, state: dict) -> None:
     else:
         await _send_error(ws, f"Unknown command type: '{cmd_type}'")
 
-    _cmd_elapsed_ms = (time.monotonic() - _cmd_start) * 1000
-    log.debug(f"Command '{cmd_type}' dispatched in {_cmd_elapsed_ms:.1f} ms")
-
 
 async def _send_error(ws: WebSocket, reason: str) -> None:
     try:
@@ -256,10 +252,13 @@ def build_telemetry(nav_ctrl) -> dict:
         "current_waypoint_index": nav_ctrl.current_waypoint_index,
         "total_waypoints": len(nav_ctrl.waypoints),
         "satellites": state.gps_sats,
+        "sats_view": state.gps_sats_view,
+        "sats_used": state.gps_sats_used,
         "fix_quality": state.gps_fix,
         "left_power": nav_ctrl.left_power,
         "right_power": nav_ctrl.right_power,
         "sensors": state.sensors,
+        "compass": {"x": state.compass_x, "y": state.compass_y, "z": state.compass_z},
         "target_bearing": nav_ctrl.target_bearing,
         "heading_error": nav_ctrl.heading_error,
         "distance_to_target": nav_ctrl.distance_to_target,
@@ -324,5 +323,4 @@ async def broadcast_loop(state: dict) -> None:
         sleep_time = max(0.0, state["broadcast_interval"] - elapsed)
         if _build_ms > 50:
             log.warning(f"Telemetry build took {_build_ms:.1f} ms (budget: 30 ms)")
-        log.debug(f"Broadcast cycle: build={_build_ms:.1f} ms, total={elapsed*1000:.1f} ms, clients={len(state['clients'])}")
         await asyncio.sleep(sleep_time)
