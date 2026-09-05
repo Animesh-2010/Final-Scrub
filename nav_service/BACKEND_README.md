@@ -62,11 +62,11 @@ Newline-delimited JSON, one object per line, both directions.
 ### Pi → Arduino
 
 ```json
-{"cmd": "motor", "l": 18, "r": 22}
+{"cmd": "motor", "l": 46, "r": 56}
 {"cmd": "ping"}
 ```
 
-- `l`/`r`: integers in `-100..100` (positive = forward)
+- `l`/`r`: signed PWM in `-255..255` (positive = forward, |value| = `analogWrite` duty)
 - `ping`: heartbeat/no-op sent when in MANUAL or DWELL
 
 ## REST API

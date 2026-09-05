@@ -285,6 +285,8 @@ class SupabaseSync:
             "motor_direction":     telem.get("motor_direction"),
             "motor_angle_deg":     telem.get("motor_angle_deg"),
             "motor_rpm":           telem.get("motor_rpm"),
+            "motor_pwm_l":         telem.get("motor_pwm_l"),
+            "motor_pwm_r":         telem.get("motor_pwm_r"),
         }
 
     # ------------------------------------------------------------------

@@ -1,180 +1,194 @@
 /*=================================================================
  SCRUB — Motor + RC Arduino (USB JSON link to Raspberry Pi)
 
- Speaks the nav_service MotorRcLink wire protocol on HardwareSerial
- (the Pi listens on USB -> /dev/ttyACM0 @ 115200).
+ DC-motor PWM controller for L298N / L9110-style dual H-bridges.
+
+ The Pi sends PWM as differential powers over the blue USB cable
+ (HardwareSerial → /dev/ttyUSB0 @ 115200). The Arduino applies real
+ PWM on the motor pins and echoes what it received back to the Pi
+ so the dashboard can display the ACTUAL PWM at the pins.
 
    Pi -> Arduino (newline-delimited JSON):
-     {"cmd":"motor","l":18,"r":22}     differential motor power (-100..100)
-     {"cmd":"ping"}                    heartbeat / no-op
+     {"cmd":"motor","l":-255,"r":128}    signed PWM duty (-255..255)
+     {"cmd":"ping"}                      heartbeat / no-op
 
    Arduino -> Pi (one line per reading, ~5 Hz):
-     {"seq":1,"mode":"AUTO","rc":{"ch1":1500,"ch2":1500}}
+     {"seq":1,"mode":"AUTO","rc":{"ch1":1500,"ch2":1500},
+      "motor":{"l":-255,"r":128,"pwm_l":-255,"pwm_r":128}}
 
- The Pi only drives the motors when effective mode is AUTO. This sketch
- reports mode:"AUTO" by default so the Pi can command it. RC channel
- values are still read (interrupt-based) and reported for telemetry.
+   l/r > 0 = forward, l/r < 0 = reverse, |l/r|~0 = stop.
+   |value| is the raw analogWrite duty (0..255).
 
- Requires the ArduinoJson library.
+ WIRING (Arduino Uno -> L298N):
+   Left motor:   PWM A (ENA)  -> D5
+                 DIR1 (IN1)   -> D6
+                 DIR2 (IN2)   -> D7
+   Right motor:  PWM B (ENB)  -> D9
+                 DIR1 (IN3)   -> D10
+                 DIR2 (IN4)   -> D11
+   GND common between Arduino, driver and Pi.
+
+ Requires the ArduinoJson library (v6).
    Sketch > Include Library > Manage Libraries > search "ArduinoJson" > install
 =================================================================*/
 
 #include <ArduinoJson.h>
 
-// ── Stepper pins ─────────────────────────────────────
-#define L_PUL   8
-#define L_DIR   9
-#define L_EN    4
+// ── Motor pins (DC motors + L298N / L9110) ────────────────
+#define L_PWM    5
+#define L_DIR1   6
+#define L_DIR2   7
 
-#define R_PUL   10
-#define R_DIR   11
-#define R_EN    7
+#define R_PWM    9
+#define R_DIR1   10
+#define R_DIR2   11
 
-// ── RC pins (must be INT0=D2 and INT1=D3 on Uno) ────
-#define CH1_PIN   2    // INT0 — steering
-#define CH3_PIN   3    // INT1 — throttle
+// ── Tuning ────────────────────────────────────────────────
+#define PWM_DEADBAND  10     // |duty| below this => stop
+#define PWM_MIN       15     // lowest non-zero duty (overcome stall)
 
-// ── Tuning ───────────────────────────────────────────
-#define STEP_DELAY_US   700    // base step period (lower = faster)
-#define STEP_BATCH      10     // steps per command cycle
-#define MOTOR_DEADBAND  10     // |power| below this => stop
+// ── Commanded motor PWM (set from Pi JSON) ────────────────
+volatile int targetL = 0;    // signed PWM -255..255
+volatile int targetR = 0;    // signed PWM -255..255
 
-// ── RC pulse storage (written by ISR, read by loop) ──
-volatile unsigned long ch1RiseTime = 0;
-volatile unsigned long ch3RiseTime = 0;
-volatile int ch1Pulse = 1500;   // raw pulse width us (1000-2000)
-volatile int ch3Pulse = 1500;
-
-// ── Commanded motor powers (set from Pi JSON) ────────
-volatile int targetL = 0;   // -100..100
-volatile int targetR = 0;   // -100..100
+int appliedPwmL = 0;         // last applied signed PWM (-255..255)
+int appliedPwmR = 0;         // last applied signed PWM (-255..255)
 
 long seq = 0;
 
-// ─────────────────────────────────────────────────────
-// INTERRUPTS — RC pulse measurement
-// ─────────────────────────────────────────────────────
-void isr_CH1() {
-  if (digitalRead(CH1_PIN) == HIGH) {
-    ch1RiseTime = micros();
-  } else {
-    unsigned long pw = micros() - ch1RiseTime;
-    if (pw > 800 && pw < 2200) ch1Pulse = (int)pw;
+// ──────────────────────────────────────────────────────────
+// PWM low-level
+// ──────────────────────────────────────────────────────────
+// pwm is signed -255..255. Returns the signed duty actually applied
+// (0 in the deadband, clamped to ±255, min ±PWM_MIN when non-zero).
+int writeMotor(int pwmPin, int dir1, int dir2, int pwm) {
+  int duty = pwm;
+  if (duty > 255)  duty = 255;
+  if (duty < -255) duty = -255;
+  int mag = abs(duty);
+  if (mag < PWM_DEADBAND) {
+    duty = 0;
+    mag = 0;
+  } else if (mag < PWM_MIN) {
+    mag  = PWM_MIN;
+    duty = (duty > 0) ? PWM_MIN : -PWM_MIN;
   }
-}
 
-void isr_CH3() {
-  if (digitalRead(CH3_PIN) == HIGH) {
-    ch3RiseTime = micros();
-  } else {
-    unsigned long pw = micros() - ch3RiseTime;
-    if (pw > 800 && pw < 2200) ch3Pulse = (int)pw;
+  if (duty > 0) {            // forward
+    digitalWrite(dir1, HIGH);
+    digitalWrite(dir2, LOW);
+  } else if (duty < 0) {     // reverse
+    digitalWrite(dir1, LOW);
+    digitalWrite(dir2, HIGH);
+  } else {                   // stop (coast)
+    digitalWrite(dir1, LOW);
+    digitalWrite(dir2, LOW);
   }
+  analogWrite(pwmPin, mag);
+
+  if (pwmPin == L_PWM) appliedPwmL = duty;
+  else                appliedPwmR = duty;
+  return duty;
 }
 
-// ─────────────────────────────────────────────────────
-// STEPPER LOW-LEVEL
-// ─────────────────────────────────────────────────────
-void leftStep() { digitalWrite(L_PUL, HIGH); delayMicroseconds(5); digitalWrite(L_PUL, LOW); delayMicroseconds(STEP_DELAY_US); }
-void rightStep(){ digitalWrite(R_PUL, HIGH); delayMicroseconds(5); digitalWrite(R_PUL, LOW); delayMicroseconds(STEP_DELAY_US); }
-
-// Drive one side by signed power (-100..100).
-//   power > 0 : dir forward, power steps
-//   power < 0 : dir backward, |power| steps
-//   power ~0  : no motion
-void driveLeft(int power) {
-  if (abs(power) < MOTOR_DEADBAND) return;
-  digitalWrite(L_DIR, (power > 0) ? HIGH : LOW);
-  int n = map(abs(power), 0, 100, 1, STEP_BATCH);
-  for (int i = 0; i < n; i++) leftStep();
-}
-
-void driveRight(int power) {
-  if (abs(power) < MOTOR_DEADBAND) return;
-  digitalWrite(R_DIR, (power > 0) ? HIGH : LOW);
-  int n = map(abs(power), 0, 100, 1, STEP_BATCH);
-  for (int i = 0; i < n; i++) rightStep();
-}
-
-// Center the differential command: steer by left-right power difference.
 void applyMotorCommand() {
   int l, r;
   noInterrupts(); l = targetL; r = targetR; interrupts();
-  driveLeft(l);
-  driveRight(r);
+  writeMotor(L_PWM, L_DIR1, L_DIR2, l);
+  writeMotor(R_PWM, R_DIR1, R_DIR2, r);
 }
 
-// ─────────────────────────────────────────────────────
-// SERIAL: receive Pi command (non-blocking)
-// ─────────────────────────────────────────────────────
-StaticJsonDocument<128> inbound;
+// ──────────────────────────────────────────────────────────
+// SERIAL: receive Pi command (non-blocking, line-based)
+// ──────────────────────────────────────────────────────────
+#define LINE_BUF_SZ   128
+char lineBuf[LINE_BUF_SZ];
+uint8_t lineLen = 0;
+bool  lineReady = false;
 
-void handleSerial() {
+void readSerial() {
   while (Serial.available()) {
-    StaticJsonDocument<128> doc;
-    DeserializationError err = deserializeJson(doc, Serial);
-    if (err) { // skip partial/garbage and keep waiting for a full line
-      while (Serial.available() && Serial.peek() != '\n') Serial.read();
-      continue;
-    }
-    const char* cmd = doc["cmd"] | "";
-    if (strcmp(cmd, "motor") == 0) {
-      noInterrupts();
-      targetL = constrain((int)doc["l"], -100, 100);
-      targetR = constrain((int)doc["r"], -100, 100);
-      interrupts();
-    } else if (strcmp(cmd, "ping") == 0) {
-      // heartbeat — respond on next telemetry emit, no action
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      if (lineLen < LINE_BUF_SZ) lineBuf[lineLen] = '\0';
+      lineReady = true;
+    } else if (lineLen < LINE_BUF_SZ - 1) {
+      lineBuf[lineLen++] = c;
+    } else {
+      lineLen = 0;   // overrun — discard partial line
     }
   }
 }
 
-// ─────────────────────────────────────────────────────
+void handleCommand() {
+  if (!lineReady) return;
+  lineReady = false;
+  lineLen = 0;
+
+  StaticJsonDocument<192> doc;
+  DeserializationError err = deserializeJson(doc, lineBuf);
+  if (err) return;   // ignore malformed heartbeat/echo
+
+  const char* cmd = doc["cmd"] | "";
+  if (strcmp(cmd, "motor") == 0) {
+    noInterrupts();
+    targetL = constrain(doc["l"] | 0, -255, 255);
+    targetR = constrain(doc["r"] | 0, -255, 255);
+    interrupts();
+  } else if (strcmp(cmd, "ping") == 0) {
+    // heartbeat — no action
+  }
+}
+
+// ──────────────────────────────────────────────────────────
 // SERIAL: emit telemetry to Pi (~5 Hz)
-// ─────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 void emitTelemetry() {
-  int rawCH1, rawCH3;
-  noInterrupts(); rawCH1 = ch1Pulse; rawCH3 = ch3Pulse; interrupts();
+  int l, r;
+  noInterrupts(); l = targetL; r = targetR; interrupts();
 
   StaticJsonDocument<192> out;
   out["seq"]  = ++seq;
-  out["mode"] = "AUTO";                 // allows the Pi to command motors
-  out["rc"]["ch1"] = rawCH1;            // raw us 1000-2000
-  out["rc"]["ch2"] = rawCH3;
+  out["mode"] = "AUTO";                       // allows the Pi to command motors
+  out["rc"]["ch1"]    = 1500;                 // no RC receiver wired on this build
+  out["rc"]["ch2"]    = 1500;
+  out["motor"]["l"]   = l;                    // signed PWM received (-255..255)
+  out["motor"]["r"]   = r;
+  out["motor"]["pwm_l"] = appliedPwmL;        // actual PWM applied at pins (-255..255)
+  out["motor"]["pwm_r"] = appliedPwmR;
   serializeJson(out, Serial);
   Serial.println();
 }
 
-// ─────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // SETUP
-// ─────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 void setup() {
-  Serial.begin(115200);                 // <- matches Pi MotorRcLink baud
+  Serial.begin(115200);                 // matches Pi MotorRcLink baud
 
-  pinMode(L_PUL, OUTPUT); pinMode(L_DIR, OUTPUT); pinMode(L_EN, OUTPUT);
-  pinMode(R_PUL, OUTPUT); pinMode(R_DIR, OUTPUT); pinMode(R_EN, OUTPUT);
+  pinMode(L_PWM, OUTPUT);  pinMode(L_DIR1, OUTPUT);  pinMode(L_DIR2, OUTPUT);
+  pinMode(R_PWM, OUTPUT);  pinMode(R_DIR1, OUTPUT);  pinMode(R_DIR2, OUTPUT);
 
-  digitalWrite(L_EN, LOW);              // LOW = enabled on TB6600
-  digitalWrite(R_EN, LOW);
-
-  pinMode(CH1_PIN, INPUT);
-  pinMode(CH3_PIN, INPUT);
-
-  attachInterrupt(digitalPinToInterrupt(CH1_PIN), isr_CH1, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(CH3_PIN), isr_CH3, CHANGE);
+  // All motors stopped until the Pi commands otherwise
+  digitalWrite(L_DIR1, LOW); digitalWrite(L_DIR2, LOW);
+  digitalWrite(R_DIR1, LOW); digitalWrite(R_DIR2, LOW);
+  analogWrite(L_PWM, 0);
+  analogWrite(R_PWM, 0);
 
   // empty preamble ignored by the Pi parser
   Serial.println(F("{\"seq\":0}"));
 }
 
-// ─────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // LOOP
-// ─────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 void loop() {
-  handleSerial();               // receive Pi motor/ping commands (non-blocking)
-  applyMotorCommand();          // step the steppers per current l/r
+  readSerial();
+  handleCommand();              // receive Pi motor/ping commands (non-blocking)
+  applyMotorCommand();          // write PWM + direction per current l/r
+
   static unsigned long lastEmit = 0;
-  if (millis() - lastEmit >= 200) {    // ~5 Hz telemetry (Pi likes >= ~1 Hz)
+  if (millis() - lastEmit >= 200) {    // ~5 Hz telemetry (Pi needs >= 1 Hz)
     emitTelemetry();
     lastEmit = millis();
   }

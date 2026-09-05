@@ -72,7 +72,9 @@ create table if not exists telemetry (
   distance_to_target float8,
   motor_direction   text,
   motor_angle_deg   float8,
-  motor_rpm         float8
+  motor_rpm         float8,
+  motor_pwm_l       int,
+  motor_pwm_r       int
 );
 
 create index if not exists telemetry_inserted_at_idx on telemetry (inserted_at desc);

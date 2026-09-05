@@ -21,7 +21,7 @@ Arduino -> Pi packet (parsed into ArduinoState):
 GPS format: {"lat", "lon", "alt", "spd", "course", "sats_view", "sats_used", "fix"}
 
 Pi -> Arduino commands (sent via SensorGpsLink or MotorRcLink):
-  {"cmd": "motor", "l": int, "r": int}   (l/r in -100..100)
+  {"cmd": "motor", "l": int, "r": int}   (l/r are signed PWM -255..255)
   {"cmd": "ping"}
 """
 
@@ -36,6 +36,18 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def scale_power_to_pwm(value: int) -> int:
+    """
+    Scale nav motor power on the -100..100 scale to signed PWM (-255..255)
+    as expected by the motor Arduino's serial protocol.
+    """
+    return max(-255, min(255, int(round(value * 255.0 / 100.0))))
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +75,8 @@ class ArduinoState:
     mode: str = "MANUAL"
     rc_ch1: int = 1500
     rc_ch2: int = 1500
+    motor_pwm_l: int = 0       # PWM duty (0..255) echoed by the motor Arduino
+    motor_pwm_r: int = 0       # PWM duty (0..255) echoed by the motor Arduino
     timestamp: float = 0.0
 
 
@@ -141,6 +155,7 @@ class SensorGpsLink:
             gps = obj.get("gps", {})
             sensors = obj.get("sensors", {})
             compass = obj.get("compass", {})
+            motor = obj.get("motor", {})
 
             # Handle both new format (sats_view/sats_used) and legacy (sats)
             sats_view = int(gps.get("sats_view", 0))
@@ -165,6 +180,8 @@ class SensorGpsLink:
                 compass_y=int(compass.get("y", 0)),
                 compass_z=int(compass.get("z", 0)),
                 sensors={k: float(sensors.get(k, 0.0)) for k in self._sensor_keys},
+                motor_pwm_l=int(motor.get("pwm_l", 0)),
+                motor_pwm_r=int(motor.get("pwm_r", 0)),
                 timestamp=time.time(),
             )
 
@@ -198,9 +215,9 @@ class SensorGpsLink:
         self._was_fresh = not stale
 
     def send_motor_command(self, left: int, right: int) -> None:
-        """Send a motor power command to the Arduino (single-board mode)."""
-        left = max(-100, min(100, int(left)))
-        right = max(-100, min(100, int(right)))
+        """Send a motor PWM command to the Arduino (single-board mode)."""
+        left = scale_power_to_pwm(left)
+        right = scale_power_to_pwm(right)
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
         log.debug(f"[UART TX] {msg.strip()!r}")
         self._write(msg)
@@ -258,6 +275,8 @@ class MotorRcLink:
         self._latest_mode: str = "MANUAL"
         self._latest_rc_ch1: int = 1500
         self._latest_rc_ch2: int = 1500
+        self._latest_motor_pwm_l: int = 0
+        self._latest_motor_pwm_r: int = 0
         self._latest_seq: int = 0
         self._lock = threading.Lock()
         self._running = False
@@ -303,11 +322,14 @@ class MotorRcLink:
 
         try:
             rc = obj.get("rc", {})
+            motor = obj.get("motor", {})
 
             with self._lock:
                 self._latest_mode = str(obj.get("mode", "MANUAL"))
                 self._latest_rc_ch1 = int(rc.get("ch1", 1500))
                 self._latest_rc_ch2 = int(rc.get("ch2", 1500))
+                self._latest_motor_pwm_l = int(motor.get("pwm_l", 0))
+                self._latest_motor_pwm_r = int(motor.get("pwm_r", 0))
                 self._latest_seq = int(obj.get("seq", 0))
                 self._last_valid_time = time.time()
 
@@ -325,6 +347,11 @@ class MotorRcLink:
         """Return the most recent RC channel values (ch1, ch2)."""
         with self._lock:
             return self._latest_rc_ch1, self._latest_rc_ch2
+
+    def get_motor_pwm(self) -> tuple[int, int]:
+        """Return the most recent PWM duties echoed by the motor Arduino (0..255)."""
+        with self._lock:
+            return self._latest_motor_pwm_l, self._latest_motor_pwm_r
 
     def get_seq(self) -> int:
         """Return the most recent sequence number."""
@@ -347,9 +374,9 @@ class MotorRcLink:
         self._was_fresh = not stale
 
     def send_motor_command(self, left: int, right: int) -> None:
-        """Send a motor power command to the Arduino."""
-        left = max(-100, min(100, int(left)))
-        right = max(-100, min(100, int(right)))
+        """Send a motor PWM command to the Arduino (signed -255..255)."""
+        left = scale_power_to_pwm(left)
+        right = scale_power_to_pwm(right)
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
         log.debug(f"[USB TX] {msg.strip()!r}")
         self._write(msg)
@@ -454,12 +481,15 @@ class DualArduinoLink:
                 compass_z=sensor_state.compass_z,
                 sensors=sensor_state.sensors,
                 mode=sensor_state.mode,
+                motor_pwm_l=sensor_state.motor_pwm_l,
+                motor_pwm_r=sensor_state.motor_pwm_r,
                 timestamp=max(sensor_state.timestamp, time.time()),
             )
         else:
             # Dual-board: merge from both links
             mode = self._motor_rc.get_mode()
             rc_ch1, rc_ch2 = self._motor_rc.get_rc_channels()
+            motor_pwm_l, motor_pwm_r = self._motor_rc.get_motor_pwm()
             motor_seq = self._motor_rc.get_seq()
 
             merged = ArduinoState(
@@ -481,6 +511,8 @@ class DualArduinoLink:
                 mode=mode,
                 rc_ch1=rc_ch1,
                 rc_ch2=rc_ch2,
+                motor_pwm_l=motor_pwm_l,
+                motor_pwm_r=motor_pwm_r,
                 timestamp=max(sensor_state.timestamp, time.time()),
             )
 
@@ -603,6 +635,7 @@ class ArduinoLink:
             sensors = obj.get("sensors", {})
             rc = obj.get("rc", {})
             compass = obj.get("compass", {})
+            motor = obj.get("motor", {})
 
             # Handle both new format (sats_view/sats_used) and legacy (sats)
             sats_view = int(gps.get("sats_view", 0))
@@ -629,6 +662,8 @@ class ArduinoLink:
                 mode=str(obj.get("mode", "MANUAL")),
                 rc_ch1=int(rc.get("ch1", 1500)),
                 rc_ch2=int(rc.get("ch2", 1500)),
+                motor_pwm_l=int(motor.get("pwm_l", 0)),
+                motor_pwm_r=int(motor.get("pwm_r", 0)),
                 timestamp=time.time(),
             )
 
@@ -646,9 +681,9 @@ class ArduinoLink:
             return self._latest
 
     def send_motor_command(self, left: int, right: int) -> None:
-        """Send a motor power command to the Arduino."""
-        left = max(-100, min(100, int(left)))
-        right = max(-100, min(100, int(right)))
+        """Send a motor PWM command to the Arduino (signed -255..255)."""
+        left = scale_power_to_pwm(left)
+        right = scale_power_to_pwm(right)
         msg = json.dumps({"cmd": "motor", "l": left, "r": right}) + "\n"
         log.debug(f"[UART TX] {msg.strip()!r}")
         self._write(msg)
@@ -763,6 +798,8 @@ class SimulatedArduinoLink:
             mode=self._mode,
             rc_ch1=1500,
             rc_ch2=1500,
+            motor_pwm_l=0,
+            motor_pwm_r=0,
             timestamp=time.time(),
         )
         self._latest = state

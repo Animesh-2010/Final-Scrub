@@ -335,6 +335,8 @@ function onTelemetry(row) {
   document.getElementById('t-fix').textContent     = row.fix_quality ?? '—';
   document.getElementById('t-left').textContent    = row.left_power  ?? '—';
   document.getElementById('t-right').textContent   = row.right_power ?? '—';
+  document.getElementById('t-pwmL').textContent    = row.motor_pwm_l  ?? '—';
+  document.getElementById('t-pwmR').textContent    = row.motor_pwm_r  ?? '—';
   document.getElementById('t-bearing').textContent = row.target_bearing   != null ? `${row.target_bearing.toFixed(1)}°` : '—°';
   document.getElementById('t-dist').textContent    = row.distance_to_target != null ? `${row.distance_to_target.toFixed(1)} m` : '— m';
   document.getElementById('t-mode').textContent    = row.effective_mode ?? '—';

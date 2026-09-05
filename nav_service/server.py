@@ -265,6 +265,8 @@ def build_telemetry(nav_ctrl) -> dict:
         "motor_direction": getattr(nav_ctrl, "motor_direction", "S"),
         "motor_angle_deg": getattr(nav_ctrl, "motor_angle_deg", 0.0),
         "motor_rpm": getattr(nav_ctrl, "motor_rpm", 0.0),
+        "motor_pwm_l": getattr(state, "motor_pwm_l", 0),
+        "motor_pwm_r": getattr(state, "motor_pwm_r", 0),
         "timestamp": time.time(),
     }
 

@@ -457,13 +457,17 @@ class NavigationController:
         """
         Re-send the currently held motor power to the Arduino.
         Runs independently at 5 Hz, not coupled to the 4 s nav tick.
+
+        When the mission is not actively commanding (IDLE, PAUSED, STOPPED,
+        MANUAL, ...) we send 0,0 so the Arduino genuinely stops the motors
+        instead of holding the last received power forever.
         """
         effective = self._effective_mode()
 
         if self.state == NavState.RUNNING and effective == "AUTO":
             self._arduino.send_motor_command(self.left_power, self.right_power)
         else:
-            self._arduino.send_ping()
+            self._arduino.send_motor_command(0, 0)
 
     # ------------------------------------------------------------------
     # Dwell sampling (called from the dwell loop in main.py)
